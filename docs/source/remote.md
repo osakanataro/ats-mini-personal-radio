@@ -22,6 +22,7 @@ Enable `Settings -> Bluetooth` to use Bluetooth LE in one of these modes:
 
 * **Ad hoc** - uses the same remote-control protocol as USB Serial, but over BLE.
 * **HID** - lets the receiver connect to supported Bluetooth remotes and keyboards.
+* **Unpair All** - clears all saved Bluetooth bonds, then switches Bluetooth to Off.
 
 Bluetooth support is experimental and may be unstable.
 
@@ -180,3 +181,4 @@ The following community projects may be useful if you want a richer remote-contr
 * [Mini-Radio Control GUI](https://github.com/Kabuse/Mini-Radio-Control) - a Python desktop GUI for serial control with real-time status display and related tools. Introduced in [Discussion #101](https://github.com/esp32-si4732/ats-mini/discussions/101).
 * [Mini-Radio-Control](https://github.com/dustinsterk/Mini-Radio-Control) - another community remote-control project hosted on GitHub. Introduced in [Discussion #101](https://github.com/esp32-si4732/ats-mini/discussions/101#discussioncomment-13848383).
 * [ATS-MINI-Remote](https://github.com/Spectral-Source/ATS-MINI-Remote) - a web-based remote control with a Flask backend and a responsive interface for controlling the receiver from devices on the local network. Introduced in [Discussion #101](https://github.com/esp32-si4732/ats-mini/discussions/101#discussioncomment-14549132).
+* [MemPuck for ATS Mini](https://github.com/n5nbd/mempuck-ats-mini-android/) - an Andoid BLE controller and authoritative VFO/memory app for the ATS Mini receiver.

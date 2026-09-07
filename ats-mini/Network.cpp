@@ -4,6 +4,7 @@
 #include "Utils.h"
 #include "Menu.h"
 #include "Draw.h"
+#include "Splash.h"
 
 #include <WiFi.h>
 #include <WiFiMulti.h>
@@ -12,9 +13,12 @@
 #include <ESPAsyncWebServer.h>
 #include <NTPClient.h>
 #include <ESPmDNS.h>
+#include <LittleFS.h>
+#include <time.h>
 
 #define CONNECT_TIME  3000  // Time of inactivity to start connecting WiFi
 #define WIFI_MULTI_TOTAL_TIMEOUT  30000
+#define SPLASH_MAX_FILE_SIZE (512U * 1024U)
 
 #ifndef WIFI_POWER_LEVEL
 #define WIFI_POWER_LEVEL WIFI_POWER_17dBm
@@ -55,6 +59,10 @@ static void wifiRegisterPowerLevelCallback();
 static void wifiPowerLevelOnEvent(WiFiEvent_t event);
 
 static void webSetConfig(AsyncWebServerRequest *request);
+static void webUploadSplash(AsyncWebServerRequest *request, const String &filename,
+                            size_t index, uint8_t *data, size_t len, bool final);
+static bool webIsAuthenticated(AsyncWebServerRequest *request);
+static bool webParseUTCDateTime(const String &text, uint32_t *epoch);
 
 static const String webInputField(const String &name, const String &value, bool pass = false);
 static const String webStyleSheet();
@@ -64,6 +72,18 @@ static const String webThemeSelector();
 static const String webRadioPage();
 static const String webMemoryPage();
 static const String webConfigPage();
+
+struct SplashUploadState
+{
+  bool incomplete;
+  bool tooLarge;
+};
+
+static bool webIsAuthenticated(AsyncWebServerRequest *request)
+{
+  return(loginUsername == "" || loginPassword == "" ||
+         request->authenticate(loginUsername.c_str(), loginPassword.c_str()));
+}
 
 //
 // Delayed WiFi connection
@@ -217,11 +237,7 @@ bool ntpSyncTime()
     ntpClient.update();
 
     if(ntpClient.isTimeSet())
-      return(clockSet(
-        ntpClient.getHours(),
-        ntpClient.getMinutes(),
-        ntpClient.getSeconds()
-      ));
+      return(clockSetEpoch(ntpClient.getEpochTime()));
   }
   return(false);
 }
@@ -353,10 +369,14 @@ static void webInit()
   });
 
   server.on("/config", HTTP_ANY, [] (AsyncWebServerRequest *request) {
-    if(loginUsername != "" && loginPassword != "")
-      if(!request->authenticate(loginUsername.c_str(), loginPassword.c_str()))
-        return request->requestAuthentication();
+    if(!webIsAuthenticated(request)) return request->requestAuthentication();
     request->send(200, "text/html", webConfigPage());
+  });
+
+  server.on("/splash.png", HTTP_GET, [] (AsyncWebServerRequest *request) {
+    if(!LittleFS.exists(SPLASH_PATH))
+      return request->send(404, "text/plain", "Not found");
+    request->send(LittleFS, SPLASH_PATH, "image/png");
   });
 
   server.onNotFound([] (AsyncWebServerRequest *request) {
@@ -364,15 +384,124 @@ static void webInit()
   });
 
   // This method saves configuration form contents
-  server.on("/setconfig", HTTP_ANY, webSetConfig);
+  server.on("/setconfig", HTTP_POST, webSetConfig, webUploadSplash);
 
   // Start web server
   server.begin();
 }
 
+static void webUploadSplash(AsyncWebServerRequest *request, const String &filename,
+                            size_t index, uint8_t *data, size_t len, bool final)
+{
+  if(!webIsAuthenticated(request)) return;
+
+  if(index == 0)
+  {
+    LittleFS.remove(SPLASH_TEMP_PATH);
+
+    SplashUploadState *state = static_cast<SplashUploadState *>(calloc(1, sizeof(SplashUploadState)));
+    if(!state) return;
+
+    request->_tempObject = state;
+    request->onDisconnect([request, state]() {
+      if(state->incomplete)
+        request->_tempFile.close();
+
+      // Discard an upload that was not installed by webSetConfig().
+      LittleFS.remove(SPLASH_TEMP_PATH);
+    });
+
+    // The browser filter is only advisory, so enforce the extension here too.
+    if(filename.endsWith(".png"))
+    {
+      request->_tempFile = LittleFS.open(SPLASH_TEMP_PATH, "w");
+      state->incomplete = request->_tempFile;
+    }
+  }
+
+  SplashUploadState *state = static_cast<SplashUploadState *>(request->_tempObject);
+
+  if(request->_tempFile && len)
+  {
+    if((index + len) > SPLASH_MAX_FILE_SIZE)
+    {
+      state->tooLarge = true;
+      state->incomplete = false;
+      request->_tempFile.close();
+      LittleFS.remove(SPLASH_TEMP_PATH);
+    }
+    else if(request->_tempFile.write(data, len) != len)
+    {
+      state->incomplete = false;
+      request->_tempFile.close();
+      LittleFS.remove(SPLASH_TEMP_PATH);
+    }
+  }
+
+  if(final && request->_tempFile)
+    request->_tempFile.close();
+
+  if(final && state)
+    state->incomplete = false;
+}
+
 void webSetConfig(AsyncWebServerRequest *request)
 {
+  if(!webIsAuthenticated(request)) return request->requestAuthentication();
+
   uint32_t prefsSave = 0;
+  uint32_t epoch;
+  bool setClock = false;
+
+  if(request->hasParam("datetime", true))
+  {
+    String dateTime = request->getParam("datetime", true)->value();
+    if(dateTime != "")
+    {
+      if(!webParseUTCDateTime(dateTime, &epoch))
+        return request->send(400, "text/plain", "Date/time must use the YYYY-mm-dd HH:MM:SS format and contain a valid UTC date and time.");
+      setClock = true;
+    }
+  }
+
+  if(request->hasParam("deletesplash", true))
+  {
+    LittleFS.remove(SPLASH_TEMP_PATH);
+    LittleFS.remove(SPLASH_PATH);
+  }
+  else if(request->hasParam("splash", true, true))
+  {
+    String filename = request->getParam("splash", true, true)->value();
+
+    if(filename != "")
+    {
+      SplashUploadState *state = static_cast<SplashUploadState *>(request->_tempObject);
+      if(state && state->tooLarge)
+        return request->send(413, "text/plain", "The splash image must not exceed 512 KB.");
+
+      if(!filename.endsWith(".png"))
+      {
+        LittleFS.remove(SPLASH_TEMP_PATH);
+        return request->send(400, "text/plain", "The splash image filename must end in .png.");
+      }
+
+      if(!LittleFS.exists(SPLASH_TEMP_PATH))
+        return request->send(500, "text/plain", "The splash image could not be stored.");
+
+      String error = splashValidate();
+      if(error != "")
+      {
+        LittleFS.remove(SPLASH_TEMP_PATH);
+        return request->send(400, "text/plain", error);
+      }
+
+      if(!LittleFS.rename(SPLASH_TEMP_PATH, SPLASH_PATH))
+      {
+        LittleFS.remove(SPLASH_TEMP_PATH);
+        return request->send(500, "text/plain", "The splash image could not be installed.");
+      }
+    }
+  }
 
   // Start modifying preferences
   prefs.begin("network", false, STORAGE_PARTITION);
@@ -413,10 +542,12 @@ void webSetConfig(AsyncWebServerRequest *request)
   // Save time zone
   if(request->hasParam("utcoffset", true))
   {
-    String utcOffset = request->getParam("utcoffset", true)->value();
-    utcOffsetIdx = utcOffset.toInt();
-    clockRefreshTime();
-    prefsSave |= SAVE_SETTINGS;
+    int idx = request->getParam("utcoffset", true)->value().toInt();
+    if(idx >= 0 && idx < getTotalUTCOffsets())
+    {
+      utcOffsetIdx = idx;
+      prefsSave |= SAVE_SETTINGS;
+    }
   }
 
   // Save theme
@@ -438,6 +569,8 @@ void webSetConfig(AsyncWebServerRequest *request)
   // Save preferences immediately
   prefsRequestSave(prefsSave, true);
 
+  if(setClock) clockSetEpoch(epoch);
+
   // Show config page again
   request->redirect("/config");
 
@@ -458,6 +591,15 @@ static const String webInputField(const String &name, const String &value, bool 
     "<INPUT TYPE='" + String(pass? "PASSWORD":"TEXT") + "' NAME='" +
     name + "' VALUE='" + newValue + "'>"
   );
+}
+
+static bool webParseUTCDateTime(const String &text, uint32_t *epoch)
+{
+  int year, month, day, hour, minute, second;
+  return(epoch && text.length() == 19 &&
+         sscanf(text.c_str(), "%4d-%2d-%2d %2d:%2d:%2d",
+                &year, &month, &day, &hour, &minute, &second) == 6 &&
+         clockUTCDateTimeToEpoch(year, month, day, hour, minute, second, epoch));
 }
 
 static const String webStyleSheet()
@@ -533,11 +675,11 @@ static const String webUtcOffsetSelector()
 
   for(int i=0 ; i<getTotalUTCOffsets(); i++)
   {
-    char text[64];
+    char text[96];
 
     sprintf(text,
-      "<OPTION VALUE='%d'%s>%s</OPTION>",
-      i, utcOffsetIdx==i? " SELECTED":"",
+      "<OPTION VALUE='%d' DATA-MINUTES='%d'%s>%s</OPTION>",
+      i, utcOffsets[i].offset * 15, utcOffsetIdx==i? " SELECTED":"",
       utcOffsets[i].desc
     );
 
@@ -570,9 +712,31 @@ static const String webRadioPage()
 {
   String ip = "";
   String ssid = "";
+  String receiverTime = "Not synchronized";
+  int offsetMinutes = getCurrentUTCOffset() * 15;
+  int offsetMagnitude = abs(offsetMinutes);
+  char utcOffset[10];
+  snprintf(utcOffset, sizeof(utcOffset), "UTC%c%02d:%02d",
+           offsetMinutes < 0? '-' : '+', offsetMagnitude / 60, offsetMagnitude % 60);
   String freq = currentMode == FM?
     String(currentFrequency / 100.0) + "MHz "
   : String(currentFrequency + currentBFO / 1000.0) + "kHz ";
+
+  if(clockAvailable())
+  {
+    time_t localTime = time(NULL) + offsetMinutes * 60;
+    struct tm fields;
+    gmtime_r(&localTime, &fields);
+    char text[20];
+
+    strftime(text, sizeof(text),
+             clockGetDate(NULL, NULL, NULL, NULL)? "%Y-%m-%d %H:%M:%S" : "%H:%M:%S",
+             &fields);
+
+    receiverTime = text;
+  }
+
+  receiverTime += " (" + String(utcOffset) + ")";
 
   if(WiFi.status()==WL_CONNECTED)
   {
@@ -602,6 +766,10 @@ static const String webRadioPage()
 "<TR>"
   "<TD CLASS='LABEL'>Firmware</TD>"
   "<TD>" + String(getVersion(true)) + "</TD>"
+"</TR>"
+"<TR>"
+  "<TD CLASS='LABEL'>Date/Time</TD>"
+  "<TD>" + receiverTime + "</TD>"
 "</TR>"
 "<TR>"
   "<TD CLASS='LABEL'>Band</TD>"
@@ -669,13 +837,18 @@ const String webConfigPage()
   bool scanHidden = prefs.getBool("wifiscanhidden", false);
   prefs.end();
 
+  String splashImage = LittleFS.exists(SPLASH_PATH)?
+    "<IMG SRC='/splash.png?" + String(millis()) + "' ALT='Current splash screen' STYLE='max-width:100%;height:auto;'>"
+  : "Not installed";
+  String splashResolution = String(spr.width()) + "x" + String(spr.height());
+
   return webPage(
 "<H1>ATS-Mini Config</H1>"
 "<P ALIGN='CENTER'>"
   "<A HREF='/'>Status</A>"
   "&nbsp;|&nbsp;<A HREF='/memory'>Memory</A>"
 "</P>"
-"<FORM ACTION='/setconfig' METHOD='POST'>"
+"<FORM ACTION='/setconfig' METHOD='POST' ENCTYPE='multipart/form-data' ONSUBMIT='browserDateTime(true)'>"
   "<TABLE COLUMNS=2>"
   "<TR><TH COLSPAN=2 CLASS='HEADING'>WiFi Network 1</TH></TR>"
   "<TR>"
@@ -720,9 +893,17 @@ const String webConfigPage()
     (scanHidden? " CHECKED ":"") + "></TD>"
   "</TR>"
   "<TR>"
+    "<TD CLASS='LABEL'>Use Browser Date/Time</TD>"
+    "<TD><INPUT TYPE='CHECKBOX' ID='browserdatetime' ONCHANGE='browserDateTime()'></TD>"
+  "</TR>"
+  "<TR>"
+    "<TD CLASS='LABEL'>UTC Date/Time</TD>"
+    "<TD><INPUT TYPE='TEXT' ID='datetime' NAME='datetime' PLACEHOLDER='YYYY-mm-dd HH:MM:SS'></TD>"
+  "</TR>"
+  "<TR>"
     "<TD CLASS='LABEL'>Time Zone</TD>"
     "<TD>"
-      "<SELECT NAME='utcoffset'>" + webUtcOffsetSelector() + "</SELECT>"
+      "<SELECT ID='utcoffset' NAME='utcoffset'>" + webUtcOffsetSelector() + "</SELECT>"
     "</TD>"
   "</TR>"
   "<TR>"
@@ -736,15 +917,46 @@ const String webConfigPage()
     "<TD><INPUT TYPE='CHECKBOX' NAME='scroll' VALUE='on'" +
     (scrollDirection<0? " CHECKED ":"") + "></TD>"
   "</TR>"
-   "<TR>"
+  "<TR>"
     "<TD CLASS='LABEL'>Zoomed Menu</TD>"
     "<TD><INPUT TYPE='CHECKBOX' NAME='zoom' VALUE='on'" +
     (zoomMenu? " CHECKED ":"") + "></TD>"
+  "</TR>"
+  "<TR><TH COLSPAN=2 CLASS='HEADING'>Splash Screen</TH></TR>"
+  "<TR>"
+    "<TD CLASS='LABEL'>Current Image</TD>"
+    "<TD>" + splashImage + "</TD>"
+  "</TR>"
+  "<TR>"
+    "<TD CLASS='LABEL'>Upload PNG</TD>"
+    "<TD><INPUT TYPE='FILE' NAME='splash' ACCEPT='.png'>"
+    "<BR><SMALL>Required resolution: " + splashResolution + " pixels; maximum size: 512 KB</SMALL></TD>"
+  "</TR>"
+  "<TR>"
+    "<TD CLASS='LABEL'>Delete Image</TD>"
+    "<TD><INPUT TYPE='CHECKBOX' NAME='deletesplash' VALUE='on'></TD>"
   "</TR>"
   "<TR><TH COLSPAN=2 CLASS='HEADING'>"
     "<INPUT TYPE='SUBMIT' VALUE='Save'>"
   "</TH></TR>"
   "</TABLE>"
 "</FORM>"
+"<SCRIPT>"
+"function browserDateTime(submit)"
+"{"
+  "const enabled=document.getElementById('browserdatetime').checked;"
+  "const dateTime=document.getElementById('datetime');"
+  "const utcOffset=document.getElementById('utcoffset');"
+  "if(enabled)"
+  "{"
+    "const now=new Date();"
+    "dateTime.value=now.toISOString().slice(0,19).replace('T',' ');"
+    "const minutes=-now.getTimezoneOffset();"
+    "for(const option of utcOffset.options)"
+      "if(Number(option.dataset.minutes)===minutes) utcOffset.value=option.value;"
+  "}"
+  "dateTime.disabled=utcOffset.disabled=enabled&&!submit;"
+"}"
+"</SCRIPT>"
 );
 }
