@@ -14,6 +14,7 @@
 #include "EIBI.h"
 #include "Remote.h"
 #include "BleMode.h"
+#include "TcpMode.h"
 #include "Splash.h"
 #include <stdlib.h>
 #include <time.h>
@@ -78,6 +79,11 @@ uint16_t currentSleep = DEFAULT_SLEEP;  // Display sleep timeout, range = 0 to 2
 long elapsedSleep = millis();           // Display sleep timer
 bool zoomMenu = false;                  // Display zoomed menu item
 int8_t scrollDirection = 1;             // Menu scroll direction
+#if defined(LILYGO_SI473X)
+bool encoderHalfStep = true;             // T-Embed defaults to half-step decoding
+#else
+bool encoderHalfStep = false;            // Standard hardware defaults to full-step decoding
+#endif
 
 // Background screen refresh
 uint32_t background_timer = millis();   // Background screen refresh timer.
@@ -95,10 +101,10 @@ uint8_t  snr  = 0;
 //
 // Devices
 //
-Rotary encoder  = Rotary(ENCODER_PIN_B, ENCODER_PIN_A);
+Rotary encoder  = Rotary(ENCODER_PIN_B, ENCODER_PIN_A, encoderHalfStep);
 ButtonTracker pb1 = ButtonTracker();
-TFT_eSPI tft    = TFT_eSPI();
-TFT_eSprite spr = TFT_eSprite(&tft);
+LGFX tft;
+LGFX_Sprite spr(&tft);
 SI4735_fixed rx;
 
 //
@@ -140,37 +146,15 @@ void setup()
   ledcWrite(PIN_LCD_BL, 0);          // Default value 0%
 
   // TFT display setup
-  tft.begin();
+  tft.init();
   tft.setRotation(3);
 
-  #if !defined(LILYGO_SI473X)
-  // Detect and fix the mirrored & inverted display
-  // https://github.com/esp32-si4732/ats-mini/issues/41
-  uint8_t did3 = tft.readcommand8(ST7789_RDDID, 3);
-  // 0x048181B3 - the original display
-  // 0x04858552 - high gamma display
-  // 0x00009307 - inverted & mirrored display
-  if(did3 == 0x93)
-  {
-    tft.invertDisplay(0);
-    tft.writecommand(TFT_MADCTL);
-    tft.writedata(TFT_MAD_MV | TFT_MAD_MX | TFT_MAD_MY | TFT_MAD_BGR);
-  }
-  else if(did3 == 0x85)
-  {
-    tft.writecommand(0x26); // GAMSET
-    tft.writedata(8);       // Gamma Curve 3
-
-    tft.writecommand(0x55); // WRCACE (content adaptive brightness and color)
-    tft.writedata(0xB1);    // High enhancement, UI mode
-  }
-  #endif
-
   tft.fillScreen(TH.bg);
+  spr.setPsram(true);
+  spr.setColorDepth(16);
   spr.createSprite(320, 170);
   spr.setTextDatum(MC_DATUM);
-  spr.setSwapBytes(true);
-  spr.setFreeFont(&Orbitron_Light_24);
+  spr.setFont(&lgfx::fonts::Orbitron_Light_24);
   spr.setTextColor(TH.text, TH.bg);
 
   // Press and hold Encoder button to force an preferences reset
@@ -341,6 +325,16 @@ ICACHE_RAM_ATTR void rotaryEncoder()
     // Reset the seek flag
     seekStop = true;
   }
+}
+
+void setEncoderHalfStep(bool enabled)
+{
+  noInterrupts();
+  encoder.setHalfStep(enabled);
+  encoderHalfStep = enabled;
+  encoderCount = 0;
+  encoderCountAccel = 0;
+  interrupts();
 }
 
 uint32_t consumeEncoderCounts()
@@ -542,6 +536,7 @@ bool consumeAbortPending()
   }
   if(bleConsumeAbortPending(bleModeIdx)) return true;
   if(serialConsumeAbortPending(usbModeIdx)) return true;
+  if(tcpConsumeAbortPending(tcpModeIdx)) return true;
 
   // Checking isPressed without debouncing because this helper is used from
   // blocking operations that do not run the normal event loop often enough.
@@ -793,6 +788,17 @@ void loop()
   encCount = ble_direction? ble_direction : encCount;
   encCountAccel = ble_direction? ble_direction : encCountAccel;
   if(ble_event & REMOTE_PREFS) prefsRequestSave(SAVE_ALL);
+
+  // Receive and execute TCP command
+  int tcp_event = tcpLoop(tcpModeIdx);
+  needRedraw |= !!(tcp_event & REMOTE_CHANGED);
+  pb1st.isPressed |= !!(tcp_event & REMOTE_PRESSED);
+  pb1st.wasClicked |= !!(tcp_event & REMOTE_CLICK);
+  pb1st.wasShortPressed |= !!(tcp_event & REMOTE_SHORT_PRESS);
+  int tcp_direction = tcp_event >> REMOTE_DIRECTION;
+  encCount = tcp_direction? tcp_direction : encCount;
+  encCountAccel = tcp_direction? tcp_direction : encCountAccel;
+  if(tcp_event & REMOTE_PREFS) prefsRequestSave(SAVE_ALL);
 
   // Block encoder rotation when in the locked sleep mode
   if(encCount && sleepOn() && sleepModeIdx==SLEEP_LOCKED) encCount = encCountAccel = 0;

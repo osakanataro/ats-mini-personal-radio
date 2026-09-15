@@ -81,6 +81,7 @@ The menu can be invoked by clicking the encoder button and is closed automatical
 * **Sleep Mode** - Locked - lock the encoder rotation during sleep; Unlocked - allow tuning the frequency in sleep mode; CPU Sleep - the maximum power saving mode. With the display being on, default brightness, and Wi-Fi the power consumption is about 170mA, without Wi-Fi 100mA, Locked/Unlocked modes draw about 70mA, CPU sleep mode draws about 40mA.
 * **Load EiBi** - download the EiBi [schedule](#schedule) (requires Wi-Fi internet connection).
 * **USB Port** - USB serial mode: Off (default) or Ad hoc. In Ad hoc mode, the receiver accepts the [remote control](remote.md) commands over the USB serial port.
+* **TCP Port** - TCP control mode: Off (default) or Ad hoc. In Ad hoc mode, one client can use the [remote control](remote.md#tcp-over-wi-fi) commands over Wi-Fi on port 60000. Wi-Fi must be enabled separately.
 * **Bluetooth** - Bluetooth LE mode: Off (default), Ad hoc, HID, or Unpair All. Ad hoc exposes the same [remote control](remote.md) protocol over BLE. HID makes the receiver act as a BLE HID central and connect to supported Bluetooth remotes/keyboards so their buttons can control tuning and menu actions. Unpair All clears all saved Bluetooth bonds and then switches Bluetooth to Off. WARNING: it is not recommended to enable both Bluetooth and Wi-Fi at the same time (the receiver might become unstable).
 * **Wi-Fi** - Wi-Fi mode: Off (default), Access Point, Access Point + Connect, Connect, Sync Only. More details on that below.
 * **About** - Informational screens (Help, Authors, System).
@@ -91,6 +92,7 @@ The Wi-Fi mode (2.4GHz only) can be used for the following purposes (for now):
 
 * Time synchronization via NTP (Network Time Protocol) or the configuration web page.
 * Download the EiBi shortwave schedule.
+* Control the receiver over [TCP](remote.md#tcp-over-wi-fi).
 * Viewing the receiver status (date/time and UTC offset, frequency, RSSI/SNR, volume, battery voltage, etc).
 * Viewing the Memory slots with saved frequencies.
 * Manage the receiver settings.
@@ -109,7 +111,7 @@ Initial configuration:
 * Enable the **AP Only** mode (the receiver will briefly display its 10.1.1.1 IP address).
 * Connect to the `ATS-Mini` access point from your phone or computer. There is no internet connection available on this access point. When connecting from a phone, it might be necessary to switch off the mobile data connection and any VPN/firewall software.
 * Open a browser and visit the following URL: <http://10.1.1.1>. The status web page should open. Alternatively, you can try the mDNS address <atsmini.local> in your browser.
-* Click the `Config` link. Here you can configure up to three access points the receiver will try to connect to, add optional login and password to protect the settings page, set the UTC date/time manually or from the browser, and change the UTC offset and other settings. Enable `Scan Hidden SSIDs` only if one of the configured access points does not broadcast its network name; leaving it off makes Wi-Fi connection faster.
+* Click the `Config` link. Here you can configure up to three access points the receiver will try to connect to, add optional login and password to protect the settings page, set the UTC date/time manually or from the browser, and change the UTC offset and other settings. Enable `Scan Hidden SSIDs` only if one of the configured access points does not broadcast its network name; leaving it off makes Wi-Fi connection faster. Leave `Half-step Encoder` off for the original EC11 20C20P encoder (20 clicks, 20 pulses), and enable it for an EC11 30C15P encoder (30 clicks, 15 pulses). Half-step mode is also required for the LILYGO T-Embed SI4732 hardware variant. See [discussion #87](https://github.com/esp32-si4732/ats-mini/discussions/87) for more information.
 * After that, switch the Wi-Fi mode to **AP+Connect** or **Connect** (the receiver will briefly show its new dynamic IP address it got from a configured access point).
 * Now connect your phone/computer to the same access point and open the new URL to check whether the receiver connected to the internet.
 
