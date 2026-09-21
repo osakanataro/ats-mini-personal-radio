@@ -6,6 +6,7 @@
 #include "Draw.h"
 #include "Splash.h"
 #include "TcpMode.h"
+#include "Ota.h"
 
 #include <WiFi.h>
 #include <WiFiMulti.h>
@@ -63,11 +64,16 @@ static void webSetConfig(AsyncWebServerRequest *request);
 static void webUploadSplash(AsyncWebServerRequest *request, const String &filename,
                             size_t index, uint8_t *data, size_t len, bool final);
 static bool webIsAuthenticated(AsyncWebServerRequest *request);
+static void webUploadFirmwareComplete(AsyncWebServerRequest *request);
+static void webUpdatePage(AsyncWebServerRequest *request, const OtaStatus &status = otaStatus(), int code = 0);
+static void webUploadFirmware(AsyncWebServerRequest *request, const String &filename,
+                              size_t index, uint8_t *data, size_t len, bool final);
 static bool webParseUTCDateTime(const String &text, uint32_t *epoch);
 
 static const String webInputField(const String &name, const String &value, bool pass = false);
 static const String webStyleSheet();
 static const String webPage(const String &body);
+static String webNavigation(const char *activePage);
 static const String webUtcOffsetSelector();
 static const String webThemeSelector();
 static const String webRadioPage();
@@ -97,6 +103,8 @@ void netRequestConnect()
 
 void netTickTime()
 {
+  otaTick();
+
   // Connect to WiFi if requested
   if(itIsTimeToWiFi && ((millis() - connectTime) > CONNECT_TIME))
   {
@@ -367,6 +375,7 @@ static void webInit()
   });
 
   server.on("/memory", HTTP_ANY, [] (AsyncWebServerRequest *request) {
+    if(!webIsAuthenticated(request)) return request->requestAuthentication();
     request->send(200, "text/html", webMemoryPage());
   });
 
@@ -388,8 +397,55 @@ static void webInit()
   // This method saves configuration form contents
   server.on("/setconfig", HTTP_POST, webSetConfig, webUploadSplash);
 
+  // Register subpaths first: the server also matches /update to /update/... .
+  server.on("/update/upload", HTTP_POST, webUploadFirmwareComplete, webUploadFirmware);
+  server.on("/update", HTTP_GET, [](AsyncWebServerRequest *request) {
+    if(!webIsAuthenticated(request)) return request->requestAuthentication();
+    webUpdatePage(request, otaStatus(), 200);
+  });
+  server.on("/update", HTTP_POST, [](AsyncWebServerRequest *request) {
+    if(!webIsAuthenticated(request)) return request->requestAuthentication();
+    if(!otaRequestLatest(request->hasParam("action", true) && request->getParam("action", true)->value() == "install"))
+      return webUpdatePage(request, {OTA_FAILED, "An update is already in progress."}, 409);
+    request->redirect("/update");
+  });
+
   // Start web server
   server.begin();
+}
+
+static void webUploadFirmware(AsyncWebServerRequest *request, const String &filename,
+                              size_t index, uint8_t *data, size_t len, bool)
+{
+  if(!webIsAuthenticated(request) || request->getResponse()) return;
+
+  if(!index)
+  {
+    if(!filename.endsWith(".bin"))
+      return webUpdatePage(request, {OTA_FAILED, "Select a firmware .bin file."});
+    const auto *param = request->getParam("size", true);
+    if(!param) return webUpdatePage(request, {OTA_FAILED, "Invalid firmware size."});
+    size_t imageSize = strtoul(param->value().c_str(), nullptr, 10);
+    // Round-trip the number to reject signs, whitespace, suffixes, and overflow.
+    if(!imageSize || imageSize > request->contentLength() || String(imageSize) != param->value())
+      return webUpdatePage(request, {OTA_FAILED, "Invalid firmware size."});
+    if(!otaBegin(imageSize))
+      return webUpdatePage(request, {OTA_FAILED, "An update is already in progress."}, 409);
+    request->client()->setRxTimeout(15);
+    request->onDisconnect([]() { otaEndUpload(); });
+  }
+
+  if(!otaWrite(data, len)) return webUpdatePage(request);
+}
+
+static void webUploadFirmwareComplete(AsyncWebServerRequest *request)
+{
+  if(!webIsAuthenticated(request)) return request->requestAuthentication();
+  if(request->getResponse()) return; // Preserve an upload error queued above.
+  if(!request->hasParam("firmware", true, true))
+    return webUpdatePage(request, {OTA_FAILED, "No complete firmware uploaded."});
+  otaFinish();
+  webUpdatePage(request);
 }
 
 static void webUploadSplash(AsyncWebServerRequest *request, const String &filename,
@@ -629,7 +685,7 @@ static const String webStyleSheet()
 "{"
   "padding: 0.5em;"
 "}"
-"TH.HEADING"
+".HEADING"
 "{"
   "background-color: #80A0FF;"
   "column-span: all;"
@@ -654,6 +710,25 @@ static const String webStyleSheet()
   "text-align: center;"
 "}"
 ;
+}
+
+static String webNavigation(const char *activePage)
+{
+  static const struct { const char *name; const char *path; } pages[] =
+  {
+    {"Status", "/"},
+    {"Memory", "/memory"},
+    {"Config", "/config"},
+    {"Update", "/update"},
+  };
+  String result = "<P ALIGN='CENTER'>";
+  for(size_t i = 0; i < sizeof(pages) / sizeof(pages[0]); i++)
+  {
+    if(i) result += "&nbsp;|&nbsp;";
+    if(!strcmp(activePage, pages[i].path)) result += pages[i].name;
+    else result += String("<A HREF='") + pages[i].path + "'>" + pages[i].name + "</A>";
+  }
+  return result + "</P>";
 }
 
 static const String webPage(const String &body)
@@ -753,10 +828,7 @@ static const String webRadioPage()
   }
 
   return webPage(
-"<H1>ATS-Mini Pocket Receiver</H1>"
-"<P ALIGN='CENTER'>"
-  "<A HREF='/memory'>Memory</A>&nbsp;|&nbsp;<A HREF='/config'>Config</A>"
-"</P>"
+"<H1>ATS-Mini Pocket Receiver</H1>" + webNavigation("/") +
 "<TABLE COLUMNS=2>"
 "<TR>"
   "<TD CLASS='LABEL'>IP Address</TD>"
@@ -820,10 +892,7 @@ static const String webMemoryPage()
   }
 
   return webPage(
-"<H1>ATS-Mini Pocket Receiver Memory</H1>"
-"<P ALIGN='CENTER'>"
-  "<A HREF='/'>Status</A>&nbsp;|&nbsp;<A HREF='/config'>Config</A>"
-"</P>"
+"<H1>ATS-Mini Pocket Receiver Memory</H1>" + webNavigation("/memory") +
 "<TABLE COLUMNS=2>" + items + "</TABLE>"
 );
 }
@@ -846,11 +915,7 @@ const String webConfigPage()
   String splashResolution = String(spr.width()) + "x" + String(spr.height());
 
   return webPage(
-"<H1>ATS-Mini Config</H1>"
-"<P ALIGN='CENTER'>"
-  "<A HREF='/'>Status</A>"
-  "&nbsp;|&nbsp;<A HREF='/memory'>Memory</A>"
-"</P>"
+"<H1>ATS-Mini Config</H1>" + webNavigation("/config") +
 "<FORM ACTION='/setconfig' METHOD='POST' ENCTYPE='multipart/form-data' ONSUBMIT='browserDateTime(true)'>"
   "<TABLE COLUMNS=2>"
   "<TR><TH COLSPAN=2 CLASS='HEADING'>WiFi Network 1</TH></TR>"
@@ -967,4 +1032,45 @@ const String webConfigPage()
 "}"
 "</SCRIPT>"
 );
+}
+
+// Explicit request errors leave the active operation's status unchanged.
+static void webUpdatePage(AsyncWebServerRequest *request, const OtaStatus &status, int code)
+{
+  const bool busy = status.phase == OTA_CHECK_QUEUED || status.phase == OTA_QUEUED ||
+                    status.phase == OTA_CONNECTING || status.phase == OTA_WRITING;
+  const bool complete = status.phase == OTA_COMPLETE || status.phase == OTA_REBOOT_PENDING;
+  const bool available = status.phase == OTA_AVAILABLE;
+  const String refresh = complete? "<SCRIPT>setTimeout(()=>location.replace('/'),20000);</SCRIPT>" :
+                         busy? "<SCRIPT>setTimeout(()=>location.replace('/update'),1000);</SCRIPT>" : "";
+  const String page = webPage(
+"<H1>Firmware Update</H1>" + webNavigation("/update") +
+"<TABLE COLUMNS=1>"
+"<TR><TD CLASS='CENTER'>" + status.message + "</TD></TR>"
+"<TR><TH CLASS='HEADING'>"
+  "<FORM METHOD='POST' ACTION='/update'>"
+  "<BUTTON TYPE='SUBMIT' NAME='action' VALUE='" + String(available? "install" : "check") + "' STYLE='padding: 0.5em 2em;'" +
+    String(busy || complete? " DISABLED" : "") + ">" + (available? "Update" : "Check for updates") + "</BUTTON>"
+  "</FORM>"
+"</TH></TR>"
+"<TR><TD CLASS='CENTER'>"
+  "<DETAILS><SUMMARY>Manual upload</SUMMARY>"
+  "<FORM METHOD='POST' ACTION='/update/upload' ENCTYPE='multipart/form-data' ONSUBMIT='this.elements.size.value=this.elements.firmware.files[0].size;this.querySelector(\"button\").disabled=true;'>"
+  // Send the size before the file so the first upload callback can read it.
+  "<INPUT TYPE='HIDDEN' NAME='size'>"
+  "<P><INPUT TYPE='FILE' NAME='firmware' ARIA-LABEL='Firmware file' ACCEPT='.bin' REQUIRED" + String(busy || complete? " DISABLED" : "") + "></P>"
+  "<SMALL>Use the <CODE>-ota.bin</CODE> or <CODE>ats-mini.ino.bin</CODE> for your receiver variant.</SMALL>"
+  "<DIV CLASS='HEADING' STYLE='padding: 0.5em; margin-top: 1em;'>"
+  "<BUTTON TYPE='SUBMIT' STYLE='padding: 0.5em 2em;'" + String(busy || complete? " DISABLED" : "") + ">Upload</BUTTON>"
+  "</DIV>"
+  "</FORM>"
+  "</DETAILS>"
+"</TD></TR>"
+"</TABLE>" + refresh
+);
+  if(!code) code = status.phase == OTA_FAILED? 400 : 200;
+  AsyncWebServerResponse *response = request->beginResponse(code, "text/html", page);
+  response->addHeader("Cache-Control", "no-store");
+  response->addHeader("Connection", "close");
+  request->send(response);
 }

@@ -4,6 +4,33 @@ The user manual is available at <https://esp32-si4732.github.io/ats-mini/manual.
 
 <!-- towncrier release notes start -->
 
+## 2.40 (2026-09-19)
+
+
+### Added
+
+- Check for and install firmware updates over Wi-Fi from Settings → Update FW or the web interface, with a separate expandable form for manual file uploads. Press the encoder to cancel a transfer. [#358](https://github.com/esp32-si4732/ats-mini/issues/358)
+
+
+### Changed
+
+- The web Memory page now requires the configured login and password.
+
+## 2.39 (2026-09-16)
+
+
+### Added
+
+- Added an Unpair All Bluetooth menu option that clears all saved BLE bonds and then switches Bluetooth off.
+- High contrast Light and Dark color themes ([discussion #366](https://github.com/esp32-si4732/ats-mini/discussions/366)).
+- TCP remote control on port 60000, enabled via Settings -> TCP Port -> Ad hoc.
+
+
+### Changed
+
+- Replaced TFT_eSPI and PNGdec with LovyanGFX for display and splash-screen rendering. The display rendering is now approximately 2.3 times faster.
+- Replaced the compile-time encoder half-step option with a persistent runtime setting on the Wi-Fi configuration page.
+
 ## 2.38 (2026-09-01)
 
 
