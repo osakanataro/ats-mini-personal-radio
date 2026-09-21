@@ -883,8 +883,10 @@ static int8_t presetIdx = 0;
 // Count the memory slots in use
 static int getPresetCount()
 {
-  int total = ITEM_COUNT(memories);
+  int total = MEMORY_COUNT;
   int count = 0;
+
+  if(!memories) return(0);
 
   for(int i=0 ; i<total ; i++)
     if(memories[i].freq) count++;
@@ -895,7 +897,9 @@ static int getPresetCount()
 // Get the memory slot holding the Nth preset, -1 if there is none
 static int getPresetSlot(int idx)
 {
-  int total = ITEM_COUNT(memories);
+  int total = MEMORY_COUNT;
+
+  if(!memories) return(-1);
 
   for(int i=0 ; i<total ; i++)
     if(memories[i].freq && !idx--) return(i);
@@ -1786,7 +1790,7 @@ static void drawPreset(int x, int y, int sx)
     }
 
     spr.setTextDatum(MC_DATUM);
-    spr.drawString(text, 40+x+(sx/2), 64+y+(i*16), 2);
+    spr.drawString(text, 40+x+(sx/2), 64+y+(i*16), FONT_SMALL);
   }
 }
 
