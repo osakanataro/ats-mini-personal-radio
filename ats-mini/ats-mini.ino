@@ -7,6 +7,7 @@
 #include "Rotary.h"
 #include "Button.h"
 #include "Menu.h"
+#include "Patches.h"
 #include "Draw.h"
 #include "Storage.h"
 #include "Themes.h"
@@ -64,6 +65,7 @@ int8_t SsbAgcIdx = 0;                   // Default SSB AGCON  : Range = 0 to 1, 
 // AVC index per mode (AM/SSB)
 int8_t AmAvcIdx = 48;                   // Default AM  = 48 (as per AN332), range = 12 to 90 in steps of 2
 int8_t SsbAvcIdx = 48;                  // Default SSB = 48, range = 12 to 90 in steps of 2
+bool ssbAvcHold = false;                // Temporary; cleared when the band/mode is reinitialized
 
 // SoftMute index per mode (AM/SSB)
 int8_t AmSoftMuteIdx = 4;               // Default AM  = 4, range = 0 to 32
@@ -132,6 +134,10 @@ void setup()
     digitalWrite(PIN_AMP_EN, LOW);
   }
 
+  // Firmware owns the mute pin so library power-up cannot release it
+  pinMode(AUDIO_MUTE, OUTPUT);
+  digitalWrite(AUDIO_MUTE, HIGH);
+
   // Enable SI4732 VDD
   pinMode(PIN_POWER_ON, OUTPUT);
   digitalWrite(PIN_POWER_ON, HIGH);
@@ -152,7 +158,7 @@ void setup()
   tft.fillScreen(TH.bg);
   spr.setPsram(true);
   spr.setColorDepth(16);
-  spr.createSprite(320, 170);
+  spr.createSprite(DISPLAY_WIDTH, DISPLAY_HEIGHT);
   spr.setTextDatum(MC_DATUM);
   spr.setFont(&lgfx::fonts::Orbitron_Light_24);
   spr.setTextColor(TH.text, TH.bg);
@@ -213,9 +219,6 @@ void setup()
   // rx.setRefClockPrescaler(1);   // will work with 32768
   // rx.setup(RESET_PIN, 0, MW_BAND_TYPE, SI473X_ANALOG_AUDIO, XOSCEN_RCLK);
 
-  // Attached pin to allows SI4732 library to mute audio as required to minimise loud clicks
-  rx.setAudioMuteMcuPin(AUDIO_MUTE);
-
   // If loading preferences fails...
   if(!prefsLoad(SAVE_SETTINGS|SAVE_VERIFY))
   {
@@ -239,6 +242,8 @@ void setup()
   // Audio Amplifier Enable. G8PTN: Added
   // After the SI4732 has been setup, enable the audio amplifier
   if(PIN_AMP_EN >= 0) digitalWrite(PIN_AMP_EN, HIGH);
+
+  patchesInit();
 
   // SI4732 STARTUP!
   selectBand(bandIdx, false);
@@ -360,6 +365,7 @@ void useBand(const Band *band)
   currentFrequency = band->currentFreq;
   currentMode = band->bandMode;
   currentBFO = 0;
+  ssbAvcHold = false;
 
   if(band->bandMode==FM)
   {
@@ -374,6 +380,7 @@ void useBand(const Band *band)
     rx.setSeekFmSNRThreshold(2); // default is 3
 
     rx.setFMDeEmphasis(fmRegions[FmRegionIdx].value);
+    applyFmStereo();
     rx.RdsInit();
     rx.setRdsConfig(1, 2, 2, 2, 2);
     rx.setGpioCtl(1, 0, 0);   // G8PTN: Enable GPIO1 as output
@@ -394,8 +401,8 @@ void useBand(const Band *band)
     {
       // Configure SI4732 for SSB (SI4732 step not used, set to 0)
       rx.setSSB(band->minimumFreq, band->maximumFreq, band->currentFreq, 0, currentMode);
-      // G8PTN: Always enabled
-      rx.setSSBAutomaticVolumeControl(1);
+      // Initialize SSB with automatic AVC and AFC disabled
+      rx.setSSBConfig(getCurrentBandwidth()->idx, 1, 0, 1, 0, 1);
       // G8PTN: Commented out
       //rx.setSsbSoftMuteMaxAttenuation(softMuteMaxAttIdx);
       // To move frequency forward, need to move the BFO backwards
@@ -1004,6 +1011,7 @@ void loop()
 
   // Tick NETWORK time, connecting to WiFi if requested
   netTickTime();
+  needRedraw |= patchesTick();
 
   // Update clock display
   needRedraw |= clockUpdate();
@@ -1016,6 +1024,9 @@ void loop()
     if(currentCmd == CMD_NONE) needRedraw = true;
     background_timer = currentTime;
   }
+
+  // Expire status messages even when no other display content changes.
+  needRedraw |= statusTick(millis());
 
   // Redraw screen if necessary
   if(needRedraw) drawScreen();

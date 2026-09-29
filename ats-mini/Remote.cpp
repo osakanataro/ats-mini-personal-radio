@@ -15,47 +15,101 @@ static uint8_t char2nibble(char key)
   return(0);
 }
 
-//
-// Capture current screen image to the remote
-//
-static void remoteCaptureScreen(Stream* stream)
+static bool remoteWriteScreenshot(Stream* stream, const uint8_t* data, size_t size)
 {
-  uint16_t width  = spr.width();
-  uint16_t height = spr.height();
+  if(stream != &Serial) return stream->write(data, size) == size;
 
-  // 14 bytes of BMP header
-  stream->println("");
-  stream->print("424d"); // BM
-  // Image size
-  stream->printf("%08x", (unsigned int)htonl(14 + 40 + 12 + width * height * 2));
-  stream->print("00000000");
-  // Offset to image data
-  stream->printf("%08x", (unsigned int)htonl(14 + 40 + 12));
-  // Image header
-  stream->print("28000000"); // Header size
-  stream->printf("%08x", (unsigned int)htonl(width));
-  stream->printf("%08x", (unsigned int)htonl(height));
-  stream->print("01001000"); // 1 plane, 16 bpp
-  stream->print("03000000"); // Compression
-  stream->print("00000000"); // Compressed image size
-  stream->print("00000000"); // X res
-  stream->print("00000000"); // Y res
-  stream->print("00000000"); // Color map
-  stream->print("00000000"); // Colors
-  stream->print("00f80000"); // Red mask
-  stream->print("e0070000"); // Green mask
-  stream->println("1f000000"); // Blue mask
-
-  // Image data
-  for(int y=height-1 ; y>=0 ; y--)
+  // HWCDC can discard queued bytes on a false disconnect. Only enqueue data
+  // that fits; screenshot output has no competing Serial writer.
+  uint32_t lastProgress = millis();
+  while(size)
   {
-    for(int x=0 ; x<width ; x++)
+    if(millis() - lastProgress >= stream->getTimeout()) return false;
+    int space = Serial.availableForWrite();
+    if(space <= 0)
     {
-      stream->printf("%04x", htons(spr.readPixel(x, y)));
+      yield();
+      continue;
     }
-    stream->println("");
+    size_t chunk = size < (size_t)space ? size : (size_t)space;
+    size_t written = Serial.write(data, chunk);
+    if(!written) return false;
+    lastProgress = millis();
+    data += written;
+    size -= written;
   }
-  stream->flush();
+  return true;
+}
+
+static constexpr uint32_t BMP_FILE_SIZE = 66 + (uint32_t)DISPLAY_WIDTH * DISPLAY_HEIGHT * 2;
+
+// BMP dimensions match the display sprite; all fields are little-endian.
+static const uint8_t bmpHeader[] = {
+  'B', 'M',
+  (uint8_t)BMP_FILE_SIZE, (uint8_t)(BMP_FILE_SIZE >> 8),
+  (uint8_t)(BMP_FILE_SIZE >> 16), (uint8_t)(BMP_FILE_SIZE >> 24),
+  0, 0, 0, 0, 66, 0, 0, 0,
+  40, 0, 0, 0,                         // BITMAPINFOHEADER size
+  (uint8_t)DISPLAY_WIDTH, (uint8_t)(DISPLAY_WIDTH >> 8), 0, 0,
+  (uint8_t)DISPLAY_HEIGHT, (uint8_t)(DISPLAY_HEIGHT >> 8), 0, 0,
+  1, 0, 16, 0, 3, 0, 0, 0,            // One plane, RGB565 bitfields
+  0, 0, 0, 0, 0, 0, 0, 0,             // Image size and X resolution
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // Y resolution and palette
+  0, 0xF8, 0, 0, 0xE0, 0x07, 0, 0, 0x1F, 0, 0, 0 // RGB masks
+};
+
+//
+// Send the screen as a hex ('C') or binary ('c') RGB565 BMP.
+//
+static void remoteCaptureScreen(Stream* stream, bool binary)
+{
+  const uint16_t *fb = (const uint16_t *)spr.getBuffer();
+  uint8_t buf[256];
+  if(!fb) return;
+
+  // Keep chunks full across the header and rows. All output is added in pairs.
+  uint8_t *p = buf;
+  auto appendPair = [&](uint8_t first, uint8_t second) {
+    *p++ = first;
+    *p++ = second;
+    if(p == buf + sizeof(buf))
+    {
+      if(!remoteWriteScreenshot(stream, buf, sizeof(buf))) return false;
+      p = buf;
+    }
+    return true;
+  };
+  auto appendHexByte = [&](uint8_t byte) {
+    static const char hex[] = "0123456789abcdef";
+    return appendPair(hex[byte >> 4], hex[byte & 0xF]);
+  };
+  auto appendBmpPair = [&](uint8_t first, uint8_t second) {
+    return binary ? appendPair(first, second)
+                  : appendHexByte(first) && appendHexByte(second);
+  };
+
+  if(!binary && !appendPair('\r', '\n')) return;
+  for(size_t i=0 ; i<sizeof(bmpHeader) ; i+=2)
+  {
+    if(!appendBmpPair(bmpHeader[i], bmpHeader[i + 1])) return;
+  }
+  if(!binary && !appendPair('\r', '\n')) return;
+
+  // Send rows bottom-up. The unrotated sprite stores contiguous rows of
+  // byte-swapped RGB565 words; emit the high byte first for BMP pixel data.
+  for(int y=DISPLAY_HEIGHT-1 ; y>=0 ; y--)
+  {
+    const uint16_t *row = fb + (uint32_t)y * DISPLAY_WIDTH;
+    for(int x=0 ; x<DISPLAY_WIDTH ; x++)
+    {
+      uint16_t v = row[x];
+      if(!appendBmpPair(v >> 8, v & 0xFF)) return;
+    }
+    if(!binary && !appendPair('\r', '\n')) return;
+  }
+  if(p != buf && !remoteWriteScreenshot(stream, buf, p - buf)) return;
+  // HWCDC flush() can discard pending output on a false disconnect.
+  if(stream != &Serial) stream->flush();
 }
 
 char remoteReadChar(Stream* stream)
@@ -328,10 +382,13 @@ void remotePrintStatus(Stream* stream, RemoteState* state)
 //
 void remoteTickTime(Stream* stream, RemoteState* state)
 {
-  if(state->remoteLogOn && (millis() - state->remoteTimer >= 500))
+  if(!state->remoteLogOn) return;
+
+  uint32_t now = millis();
+  if(now - state->remoteTimer >= 500)
   {
     // Mark time and increment diagnostic sequence number
-    state->remoteTimer = millis();
+    state->remoteTimer = now;
     state->remoteSeqnum++;
     // Show status
     remotePrintStatus(stream, state);
@@ -432,8 +489,9 @@ int remoteDoCommand(Stream* stream, RemoteState* state, char key)
       event |= REMOTE_PREFS;
       break;
     case 'C':
+    case 'c':
       state->remoteLogOn = false;
-      remoteCaptureScreen(stream);
+      remoteCaptureScreen(stream, key == 'c');
       break;
     case 't':
       state->remoteLogOn = !state->remoteLogOn;

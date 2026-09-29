@@ -61,7 +61,7 @@ The menu can be invoked by clicking the encoder button and is closed automatical
 * **Squelch** - mute the speaker when the selected RSSI (dBuV) or SNR (dB) level is lower than the defined threshold. The setting is saved separately for each mode (FM, LSB, USB, AM). When Off, short press the encoder button to switch between RSSI and SNR. When enabled, short press turns squelch Off. Unlikely to work in SSB mode.
 * **Bandwidth** - Selects the bandwidth of the channel filter.
 * **AGC/ATTN** - Automatic Gain Control (on/off) or Attenuation level. The attenuator is not applicable to SSB mode.
-* **AVC** - Sets the maximum gain for automatic volume control (not applicable to FM mode).
+* **AVC** - Sets the maximum gain for automatic volume control (not applicable to FM mode). In LSB/USB, short press toggles Hold to disable AVC and hold the current gain. Rotate to resume automatic AVC and adjust the maximum gain. Hold is temporary and clears on band/mode reinitialization or restart; the displayed maximum gain is not a measurement of held gain.
 * **SoftMute** - Sets softmute max attenuation (only applicable to AM/SSB).
 * **Settings** - Settings submenu.
 
@@ -73,6 +73,8 @@ The menu can be invoked by clicking the encoder button and is closed automatical
 * **UTC Offset** - Affects the displayed date and time. Please note that automatic DST transitions are not supported; the offset needs to be adjusted manually.
 * **Date/Time** - Set the UTC date and time with the encoder. Click to select the next field, or short press to set the clock and close the menu. A timeout closes the menu without changing the clock.
 * **FM Region** - FM de-emphasis time constant by region (50µs for EU/JP/AU and 70µs for the US).
+* **FM Stereo** - **Auto** lets the receiver blend down to mono on its own as the signal gets worse, **Mono** forces mono audio, trading the stereo image for less hiss on a weak station.
+* **DSP Patches** - Select **Default** or an uploaded AM/SSB patch set. Manage these experimental patches on the web interface's **Patches** page.
 * **Theme** - Color theme.
 * **UI Layout** - Alternative UI layouts. For now there is just one alternative UI with large S-meter and S/N-meter.
 * **Zoom Menu** - Display the currently selected menu item using a larger font (accessibility option).
@@ -97,7 +99,7 @@ The Wi-Fi mode (2.4GHz only) can be used for the following purposes (for now):
 * Viewing the receiver status (date/time and UTC offset, frequency, RSSI/SNR, volume, battery voltage, etc).
 * Viewing the Memory slots with saved frequencies.
 * Manage the receiver settings.
-* Upload or delete an optional splash image shown when the receiver starts.
+* Upload or delete an optional [splash image](_static/splash-outdoor.png) shown when the receiver starts.
 
 There are a couple of modes:
 
@@ -125,6 +127,16 @@ When on the go, you can set up a mobile Wi-Fi hotspot on your smartphone and use
 <!-- ### Receiver settings available via Wi-Fi only -->
 
 Firmware updates are available through **Settings → Update FW** or the web interface's **Update** page. See [updating over Wi-Fi](flash.md#update-over-wi-fi) for instructions.
+
+On the **Patches** page, upload and select experimental AM/SSB patches (see [discussion #377](https://github.com/esp32-si4732/ats-mini/discussions/377)):
+
+1. Find the section for **Custom 1**, **Custom 2**, or **Custom 3** where you want to upload the patches.
+2. Select **AM** or **SSB**, choose the matching `.bin` patch file (up to 32 KiB), and click **Save**. Repeat for the other mode if needed.
+3. Activate the patch set on the web page or through **Settings → DSP Patches** on the receiver. Only sets with uploaded patches are selectable.
+
+Missing modes use Default; FM is unaffected. To replace patches in the active set, activate another set or **Default** first.
+
+To remove a patch set, check **Delete set** and click **Save**. Deletion takes priority over any selected upload.
 
 ## Schedule
 

@@ -123,6 +123,7 @@ The ad hoc protocol is the main remote-control protocol. It can be used over:
 | <kbd>o</kbd> | Sleep Off           |                                                                                                  |
 | <kbd>t</kbd> | Toggle Log          | Toggle the receiver monitor (log) on and off                                                     |
 | <kbd>C</kbd> | Screenshot          | Capture a screenshot and print it as a BMP image in HEX format                                   |
+| <kbd>c</kbd> | Screenshot (binary) | Capture a screenshot as a raw little-endian RGB565 BMP (about half the bytes of `C`)             |
 | <kbd>$</kbd> | Show Memory Slots   | Show memory slots in a format suitable for restoring them after the reset                        |
 | <kbd>#</kbd> | Set Memory Slot     | Example `#01,VHF,107900000,FM` (slot, band, frequency, mode). Set freq to 0 to clear a slot.     |
 | <kbd>F</kbd> | Set Frequency       | Example `F107900000`. Frequency is in Hz and must stay within the current band. In SSB modes, sub-kHz digits set the BFO. |
@@ -160,13 +161,33 @@ In SSB mode, the "Display" frequency (Hz) = (currentFrequency x 1000) + currentB
 
 #### Making screenshots
 
-The screenshot function is intended for interface and theme designers, as well as for the documentation writers. It dumps the screen to the remote console as a BMP image in HEX format. To convert it to an image file, you need to convert the HEX string to binary format.
+The screenshot function is intended for interface and theme designers, as well as for the documentation writers. The `C` command dumps the screen to the remote console as a BMP image in HEX format. To convert it to an image file, you need to convert the HEX string to binary format.
 
 A quick one-liner for macOS and Linux over the **USB Serial** transport (change the `/dev/cu.usbmodem14401` serial port name as needed):
 
 ```shell
-echo -n C | socat stdio /dev/cu.usbmodem14401,echo=0,raw | xxd -r -p > /tmp/screenshot.bmp
+echo -n C | socat -T5 stdio /dev/cu.usbmodem14401,echo=0,raw | xxd -r -p > /tmp/screenshot.bmp
 ```
+
+The `-T5` option makes `socat` exit after five seconds without data.
+
+The `c` command sends a BMP file directly, using about half as much data:
+
+```shell
+echo -n c | socat -T5 stdio /dev/cu.usbmodem14401,echo=0,raw > /tmp/screenshot.bmp
+```
+
+Over **TCP**, enable the TCP Ad hoc transport as described above, then use either command (replace `atsmini.local` with the receiver's IP address if needed):
+
+```shell
+# Hex screenshot
+echo -n C | socat -t 120 -T5 stdio TCP4:atsmini.local:60000,connect-timeout=5 | xxd -r -p > /tmp/screenshot.bmp
+
+# Binary screenshot
+echo -n c | socat -t 120 -T5 stdio TCP4:atsmini.local:60000,connect-timeout=5 > /tmp/screenshot.bmp
+```
+
+The `-t 120` option allows up to two minutes to receive the screenshot after the command input ends; `-T5` exits sooner after five seconds without data.
 
 ### Bluetooth HID protocol
 

@@ -9,19 +9,42 @@
 #include <sys/time.h>
 #include <time.h>
 
-// SSB patch for whole SSBRX initialization string
-#include "patch_init.h"
-
 extern ButtonTracker pb1;
 
 // Current sleep status, returned by sleepOn()
 static bool sleep_on = false;
 
-// Current SSB patch status
-static bool ssbLoaded = false;
-
 // Time
 static bool clockHasBeenSet = false;
+
+// Status is owned by the main task, including updates from network operations.
+char statusLines[2][96];
+static bool statusDirty = false;
+static uint32_t statusStarted;
+static uint32_t statusDuration;
+
+void statusShow(const char *line1, const char *line2, uint32_t duration)
+{
+  strlcpy(statusLines[0], line1? line1 : "", sizeof(statusLines[0]));
+  strlcpy(statusLines[1], line2? line2 : "", sizeof(statusLines[1]));
+  statusStarted = millis();
+  statusDuration = (statusLines[0][0] || statusLines[1][0])? duration : 0;
+  statusDirty = true;
+}
+
+bool statusTick(uint32_t now)
+{
+  if(statusDuration && (uint32_t)(now - statusStarted) >= statusDuration)
+  {
+    statusLines[0][0] = statusLines[1][0] = '\0';
+    statusDuration = 0;
+    statusDirty = true;
+  }
+
+  bool changed = statusDirty;
+  statusDirty = false;
+  return(changed);
+}
 
 //
 // Get firmware version and build time, as a string
@@ -63,25 +86,6 @@ const char *getMACAddress()
     );
   }
   return(macString);
-}
-
-//
-// Load SSB patch into SI4735
-//
-void loadSSB(uint8_t bandwidth, bool draw)
-{
-  if(!ssbLoaded)
-  {
-    if(draw) drawMessage("Loading SSB");
-    rx.loadPatch(ssb_patch_content, sizeof(ssb_patch_content), bandwidth);
-    ssbLoaded = true;
-  }
-}
-
-void unloadSSB()
-{
-  // Just mark SSB patch as unloaded
-  ssbLoaded = false;
 }
 
 //
@@ -241,7 +245,7 @@ bool sleepOn(int x)
       if(muteOn(MUTE_SQUELCH) && !muteOn(MUTE_MAIN)) muteOn(MUTE_FORCE, true);
       sleepOn(false);
       // Enable WiFi
-      netInit(wifiModeIdx, false);
+      netInit(wifiModeIdx);
     }
   }
   else if((x==0) && sleep_on)

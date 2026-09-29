@@ -3,6 +3,46 @@
 class SI4735_fixed: public SI4735
 {
   public:
+    // Clear stale SSB sideband bits before the first FM tune
+    void setFM(uint16_t fromFreq, uint16_t toFreq, uint16_t initialFreq, uint16_t step)
+    {
+      currentFrequencyParams.arg.USBLSB = 0;
+      SI4735::setFM(fromFreq, toFreq, initialFreq, step);
+    }
+
+    // Clear stale SSB sideband bits before the first AM tune
+    void setAM(uint16_t fromFreq, uint16_t toFreq, uint16_t initialFreq, uint16_t step)
+    {
+      currentFrequencyParams.arg.USBLSB = 0;
+      SI4735::setAM(fromFreq, toFreq, initialFreq, step);
+    }
+
+    // AM patch loading without SSB-specific properties. A null content
+    // pointer restores stock AM when setAM() would otherwise skip power-up.
+    void loadAMPatch(const uint8_t *content, uint16_t size)
+    {
+      if(content)
+      {
+        queryLibraryId();
+        setPowerUp(ctsIntEnable, 0, 1, currentClockType, AM_CURRENT_MODE, currentAudioMode);
+        radioPowerUp();
+        delay(50);
+        downloadPatch(content, size);
+        delay(25);
+      }
+      else
+      {
+        powerDown();
+        setPowerUp(ctsIntEnable, 0, 0, currentClockType, AM_CURRENT_MODE, currentAudioMode);
+        radioPowerUp();
+      }
+      setAvcAmMaxGain(currentAvcAmMaxGain);
+      setVolume(volume);
+      currentSsbStatus = 0;
+      currentFrequencyParams.arg.USBLSB = 0;
+      lastMode = AM_CURRENT_MODE;
+    }
+
     // Fixing SI4735::getRdsPI() bug where it only returns BLOCKAL
     uint16_t getRdsPI(void)
     {
@@ -41,6 +81,30 @@ class SI4735_fixed: public SI4735
     inline char *getRdsStationInformation(void)
     {
       return getRdsVersionCode()? SI4735::getRdsText2B() : SI4735::getRdsText2A();
+    }
+
+    // Implementing the empty SI4735::setFmStereoOff() placeholder by
+    // moving every blend threshold beyond reach, which pins the audio to mono
+    void setFmStereoOff()
+    {
+      setFmBlendRssiStereoThreshold(127);
+      setFmBLendRssiMonoThreshold(127);
+      setFmBlendSnrStereoThreshold(127);
+      setFmBLendSnrMonoThreshold(127);
+      setFmBlendMultiPathStereoThreshold(0);
+      setFmBlendMultiPathMonoThreshold(0);
+    }
+
+    // Implementing the empty SI4735::setFmStereoOn() placeholder by restoring
+    // the blend thresholds the chip starts up with, see AN332
+    void setFmStereoOn()
+    {
+      setFmBlendRssiStereoThreshold(49);
+      setFmBLendRssiMonoThreshold(30);
+      setFmBlendSnrStereoThreshold(27);
+      setFmBLendSnrMonoThreshold(14);
+      setFmBlendMultiPathStereoThreshold(20);
+      setFmBlendMultiPathMonoThreshold(60);
     }
 
     // Decode UTC time directly from the RDS data blocks.

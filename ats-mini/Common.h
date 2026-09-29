@@ -5,6 +5,9 @@
 #include "Display.h"
 #include <SI4735-fixed.h>
 
+static constexpr uint16_t DISPLAY_WIDTH  = 320;
+static constexpr uint16_t DISPLAY_HEIGHT = 170;
+
 // Shorthands for the LovyanGFX fonts used by the UI
 static constexpr const lgfx::IFont* FONT_DEFAULT = &lgfx::fonts::Font0;  // 6x8 system font
 static constexpr const lgfx::IFont* FONT_SMALL   = &lgfx::fonts::Font2;  // 16px general UI text
@@ -20,7 +23,7 @@ static constexpr const lgfx::IFont* FONT_DIGITS  = &lgfx::fonts::Font7;  // 48px
 #define AUTHORS_LINE3  "Goshante, G8PTN (Dave), R9UCL (Max Arnold),"
 #define AUTHORS_LINE4  "Marat Fayzullin"
 
-#define VER_APP        240  // Firmware version
+#define VER_APP        241  // Firmware version
 #define VER_OTA          1  // OTA compatibility; bump when a full USB flash is required
 #define VER_SETTINGS    71  // Settings version
 #define VER_MEMORIES    71  // Memories version
@@ -41,6 +44,13 @@ static constexpr const lgfx::IFont* FONT_DIGITS  = &lgfx::fonts::Font7;  // 48px
 #define RDS_PT        0b00010000  // Program type
 #define RDS_RBDS      0b00100000  // Use US PTYs
 
+// DSP patch options
+#define DSP_PATCHES_DEFAULT      0
+
+// FM stereo modes
+#define FM_STEREO_AUTO 0 // Let the receiver blend down to mono on weak signals
+#define FM_STEREO_MONO 1 // Force mono audio
+
 // Sleep modes
 #define SLEEP_LOCKED   0 // Lock the encoder
 #define SLEEP_UNLOCKED 1 // Do not lock the encoder
@@ -53,7 +63,7 @@ static constexpr const lgfx::IFont* FONT_DIGITS  = &lgfx::fonts::Font7;  // 48px
 #define RESET_PIN     16            // GPIO16   SI4732/5 Reset
 #define ESP32_I2C_SCL  8            // GPIO8    SI4732/5 Clock
 #define ESP32_I2C_SDA 18            // GPIO18   SI4732/5 Data
-#define AUDIO_MUTE    17            // GPIO17   Hardware L/R mute, controlled via SI4735 code (1 = Mute)
+#define AUDIO_MUTE    17            // GPIO17   Hardware L/R mute, controlled by firmware (1 = Mute)
 #define PIN_AMP_EN    -1            // T-Embed shield has no separate amp enable pin
 
 // Display PINs
@@ -72,7 +82,7 @@ static constexpr const lgfx::IFont* FONT_DIGITS  = &lgfx::fonts::Font7;  // 48px
 #define RESET_PIN     16            // GPIO16   SI4732/5 Reset
 #define ESP32_I2C_SCL 17            // GPIO17   SI4732/5 Clock
 #define ESP32_I2C_SDA 18            // GPIO18   SI4732/5 Data
-#define AUDIO_MUTE     3            // GPIO3    Hardware L/R mute, controlled via SI4735 code (1 = Mute)
+#define AUDIO_MUTE     3            // GPIO3    Hardware L/R mute, controlled by firmware (1 = Mute)
 #define PIN_AMP_EN    10            // GPIO10   Hardware Audio Amplifer enable (1 = Enable)
 
 // Display PINs
@@ -194,6 +204,7 @@ extern int8_t AmAgcIdx;
 extern int8_t SsbAgcIdx;
 extern int8_t AmAvcIdx;
 extern int8_t SsbAvcIdx;
+extern bool ssbAvcHold;
 extern int8_t AmSoftMuteIdx;
 extern int8_t SsbSoftMuteIdx;
 extern uint8_t rdsModeIdx;
@@ -202,6 +213,8 @@ extern uint8_t tcpModeIdx;
 extern uint8_t bleModeIdx;
 extern uint8_t wifiModeIdx;
 extern uint8_t FmRegionIdx;
+extern uint8_t fmStereoIdx;
+extern uint8_t dspPatchesIdx;
 
 extern int8_t agcIdx;
 extern int8_t agcNdx;
@@ -243,7 +256,7 @@ bool identifyFrequency(uint16_t freq, bool periodic = false);
 // Network.cpp
 int8_t getWiFiStatus();
 char *getWiFiIPAddress();
-void netInit(uint8_t netMode, bool showStatus = true);
+void netInit(uint8_t netMode);
 void netStop();
 bool ntpIsAvailable();
 bool ntpSyncTime();
