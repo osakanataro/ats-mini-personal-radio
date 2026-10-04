@@ -267,7 +267,6 @@ void netTickTime();
 // Remote.c
 #define REMOTE_CHANGED   1
 #define REMOTE_CLICK     2
-#define REMOTE_PREFS     4
 #define REMOTE_SHORT_PRESS 8
 #define REMOTE_PRESSED   16
 #define REMOTE_DIRECTION 8

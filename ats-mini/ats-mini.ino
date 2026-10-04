@@ -702,6 +702,7 @@ bool clickFreq(bool shortPress)
      }
 
      if (updated) {
+       prefsRequestSave(SAVE_CUR_BAND);
        // Clear current station name and information
        clearStationInfo();
        // Check for named frequencies
@@ -784,7 +785,6 @@ void loop()
   int ser_direction = ser_event >> REMOTE_DIRECTION;
   encCount = ser_direction? ser_direction : encCount;
   encCountAccel = ser_direction? ser_direction : encCountAccel;
-  if(ser_event & REMOTE_PREFS) prefsRequestSave(SAVE_ALL);
 
   // Receive and execute BLE command
   int ble_event = bleLoop(bleModeIdx);
@@ -795,7 +795,6 @@ void loop()
   int ble_direction = ble_event >> REMOTE_DIRECTION;
   encCount = ble_direction? ble_direction : encCount;
   encCountAccel = ble_direction? ble_direction : encCountAccel;
-  if(ble_event & REMOTE_PREFS) prefsRequestSave(SAVE_ALL);
 
   // Receive and execute TCP command
   int tcp_event = tcpLoop(tcpModeIdx);
@@ -806,7 +805,6 @@ void loop()
   int tcp_direction = tcp_event >> REMOTE_DIRECTION;
   encCount = tcp_direction? tcp_direction : encCount;
   encCountAccel = tcp_direction? tcp_direction : encCountAccel;
-  if(tcp_event & REMOTE_PREFS) prefsRequestSave(SAVE_ALL);
 
   // Block encoder rotation when in the locked sleep mode
   if(encCount && sleepOn() && sleepModeIdx==SLEEP_LOCKED) encCount = encCountAccel = 0;
@@ -882,8 +880,6 @@ void loop()
         default:
           // Side bar menus / settings
           needRedraw |= doSideBar(currentCmd, encCount, encCountAccel);
-          // Current settings, etc. may have changed
-          prefsRequestSave(SAVE_ALL);
           break;
       }
 
