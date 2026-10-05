@@ -975,13 +975,11 @@ static int8_t presetIdx = 0;
 // Count the memory slots in use
 static int getPresetCount()
 {
-  int total = MEMORY_COUNT;
+  int total = getTotalMemories();
   int count = 0;
 
-  if(!memories) return(0);
-
   for(int i=0 ; i<total ; i++)
-    if(memories[i].freq) count++;
+    if(getMemory(i).freq) count++;
 
   return(count);
 }
@@ -989,23 +987,23 @@ static int getPresetCount()
 // Get the memory slot holding the Nth preset, -1 if there is none
 static int getPresetSlot(int idx)
 {
-  int total = MEMORY_COUNT;
-
-  if(!memories) return(-1);
+  int total = getTotalMemories();
 
   for(int i=0 ; i<total ; i++)
-    if(memories[i].freq && !idx--) return(i);
+    if(getMemory(i).freq && !idx--) return(i);
 
   return(-1);
 }
 
 // Compose the list label for a memory slot
-static void getPresetLabel(int slot, char *buf, size_t size)
+static void getPresetLabel(const Memory &memory, char *buf, size_t size)
 {
-  if(memories[slot].mode==FM)
-    snprintf(buf, size, "%3.2f %s", memories[slot].freq / 1000000.0, bandModeDesc[memories[slot].mode]);
+  if(memory.name[0])
+    snprintf(buf, size, "%s", memory.name);
+  else if(memory.mode==FM)
+    snprintf(buf, size, "%3.2f %s", memory.freq / 1000000.0, bandModeDesc[memory.mode]);
   else
-    snprintf(buf, size, "%5lu %s", memories[slot].freq / 1000, bandModeDesc[memories[slot].mode]);
+    snprintf(buf, size, "%5lu %s", memory.freq / 1000, bandModeDesc[memory.mode]);
 }
 
 void enterPresetMode()
@@ -1016,10 +1014,10 @@ void enterPresetMode()
   presetIdx = 0;
   for(int i=0 ; i<count ; i++)
   {
-    const Memory *memory = &memories[getPresetSlot(i)];
+    const Memory memory = getMemory(getPresetSlot(i));
 
-    if(memory->band==bandIdx && memory->mode==currentMode
-    && freqFromHz(memory->freq, memory->mode)==currentFrequency)
+    if(memory.band==bandIdx && memory.mode==currentMode
+    && freqFromHz(memory.freq, memory.mode)==currentFrequency)
     {
       presetIdx = i;
       break;
@@ -1037,7 +1035,11 @@ static void doPreset(int16_t enc)
 
   // Tune to the selected station right away, unless on the menu item
   int slot = getPresetSlot(presetIdx);
-  if(slot>=0) tuneToMemory(&memories[slot]);
+  if(slot>=0)
+  {
+    const Memory memory = getMemory(slot);
+    tuneToMemory(&memory);
+  }
 }
 
 static void clickPreset(uint8_t idx, bool shortPress)
@@ -1879,7 +1881,7 @@ static void drawPreset(int x, int y, int sx)
       text = "Menu >";
     else
     {
-      getPresetLabel(slot, buf, sizeof(buf));
+      getPresetLabel(getMemory(slot), buf, sizeof(buf));
       text = buf;
     }
 
