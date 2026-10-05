@@ -57,7 +57,7 @@ The menu can be invoked by clicking the encoder button and is closed automatical
 * **Step** - Tuning step (not every step is available on every band and mode).
 * **Seek** - Seek up or down on AM/FM, normal tuning on LSB/USB (hardware seek function is not supported by SI4732 on SSB). Rotate or click the encoder to stop the seek. Use short press to switch between the seek and [schedule](#schedule) modes. Use press and rotate for manual fine tuning.
 * **Scan** - Scan a frequency range and plot the RSSI (S) and SNR (N) graphs (unfortunately, these metrics are almost meaningless in SSB modes due to SI4732 patch limitations). Both graphs are normalized to 0.0 - 1.0 range. While the Scan mode is active, short press the encoder for 0.5 seconds to rescan. To abort a running scan process click or rotate the encoder.
-* **Memory** - 99 slots to store favorite frequencies. Short press (>0.5 sec) on an empty slot to store the current frequency, short press to erase a slot, switch between stored slots by rotating the encoder, click to exit the menu. It is also possible to edit the memory slots via [remote control](remote.md) or via the [web based tool](memory.md) in Google Chrome.
+* **Memory** - 99 slots to store favorite frequencies. Named slots show their name instead of the frequency and mode in the menu. A matching name also appears below the tuned frequency; a received RDS station name takes priority. Short press (>0.5 sec) on an empty slot to store the current frequency, short press to erase a slot, switch between stored slots by rotating the encoder, click to exit the menu. Edit memory slots using the receiver's **Memory** page over [Wi-Fi](#wi-fi) or via [remote control](remote.md). For older firmware, use the [legacy USB memory editor](memory.md).
 * **Squelch** - mute the speaker when the selected RSSI (dBuV) or SNR (dB) level is lower than the defined threshold. The setting is saved separately for each mode (FM, LSB, USB, AM). When Off, short press the encoder button to switch between RSSI and SNR. When enabled, short press turns squelch Off. Unlikely to work in SSB mode.
 * **Bandwidth** - Selects the bandwidth of the channel filter.
 * **AGC/ATTN** - Automatic Gain Control (on/off) or Attenuation level. The attenuator is not applicable to SSB mode.
@@ -68,25 +68,25 @@ The menu can be invoked by clicking the encoder button and is closed automatical
 ## Settings menu
 
 * **Brightness** - Display brightness level (10...255). The minimal one draws about 80mA of the battery power, the default one about 100mA, the max level about 120mA.
-* **Calibration** - SSB calibration offset (-2000...2000, per mode/band).
-* **RDS** - Radio Data System options: PS - radio station name, CT - date and time, RT - text, PTY - genre, ALL (EU/US) - everything. RDS CT should contain UTC date and time, but some stations incorrectly transmit local or completely bogus values. The clock is synchronized from RDS only once. To synchronize it again, disable and re-enable RDS CT or switch the receiver off and on.
-* **UTC Offset** - Affects the displayed date and time. Please note that automatic DST transitions are not supported; the offset needs to be adjusted manually.
 * **Date/Time** - Set the UTC date and time with the encoder. Click to select the next field, or short press to set the clock and close the menu. A timeout closes the menu without changing the clock.
-* **FM Region** - FM de-emphasis time constant by region (50µs for EU/JP/AU and 70µs for the US).
-* **FM Stereo** - **Auto** lets the receiver blend down to mono on its own as the signal gets worse, **Mono** forces mono audio, trading the stereo image for less hiss on a weak station.
-* **DSP Patches** - Select **Default** or an uploaded AM/SSB patch set. Manage these experimental patches on the web interface's **Patches** page.
+* **UTC Offset** - Affects the displayed date and time. Please note that automatic DST transitions are not supported; the offset needs to be adjusted manually.
+* **Sleep** - Automatic sleep interval in seconds (0 - disabled).
+* **Sleep Mode** - Locked - lock the encoder rotation during sleep; Unlocked - allow tuning the frequency in sleep mode; CPU Sleep - the maximum power saving mode. With the display being on, default brightness, and Wi-Fi the power consumption is about 170mA, without Wi-Fi 100mA, Locked/Unlocked modes draw about 70mA, CPU sleep mode draws about 40mA.
 * **Theme** - Color theme.
 * **UI Layout** - Alternative UI layouts. For now there is just one alternative UI with large S-meter and S/N-meter.
 * **Zoom Menu** - Display the currently selected menu item using a larger font (accessibility option).
 * **Scroll Dir.** - Menu scroll direction for clockwise encoder turn.
-* **Sleep** - Automatic sleep interval in seconds (0 - disabled).
-* **Sleep Mode** - Locked - lock the encoder rotation during sleep; Unlocked - allow tuning the frequency in sleep mode; CPU Sleep - the maximum power saving mode. With the display being on, default brightness, and Wi-Fi the power consumption is about 170mA, without Wi-Fi 100mA, Locked/Unlocked modes draw about 70mA, CPU sleep mode draws about 40mA.
+* **RDS** - Radio Data System options: PS - radio station name, CT - date and time, RT - text, PTY - genre, ALL (EU/US) - everything. RDS CT should contain UTC date and time, but some stations incorrectly transmit local or completely bogus values. The clock is synchronized from RDS only once. To synchronize it again, disable and re-enable RDS CT or switch the receiver off and on.
+* **FM Stereo** - **Auto** lets the receiver blend down to mono on its own as the signal gets worse, **Mono** forces mono audio, trading the stereo image for less hiss on a weak station.
+* **FM Region** - FM de-emphasis time constant by region (50µs for EU/JP/AU and 70µs for the US).
+* **Calibration** - SSB calibration offset (-2000...2000, per mode/band).
+* **DSP Patches** - Select **Default** or an uploaded AM/SSB patch set. Manage these experimental patches on the web interface's **Patches** page.
 * **Load EiBi** - download the EiBi [schedule](#schedule) (requires Wi-Fi internet connection).
+* **Update FW** - **Check** shows the available firmware version; **Update** installs it (requires a Wi-Fi internet connection). See [updating over Wi-Fi](flash.md#update-over-wi-fi).
 * **USB Port** - USB serial mode: Off (default) or Ad hoc. In Ad hoc mode, the receiver accepts the [remote control](remote.md) commands over the USB serial port.
 * **TCP Port** - TCP control mode: Off (default) or Ad hoc. In Ad hoc mode, one client can use the [remote control](remote.md#tcp-over-wi-fi) commands over Wi-Fi on port 60000. Wi-Fi must be enabled separately.
 * **Bluetooth** - Bluetooth LE mode: Off (default), Ad hoc, HID, or Unpair All. Ad hoc exposes the same [remote control](remote.md) protocol over BLE. HID makes the receiver act as a BLE HID central and connect to supported Bluetooth remotes/keyboards so their buttons can control tuning and menu actions. Unpair All clears all saved Bluetooth bonds and then switches Bluetooth to Off. WARNING: it is not recommended to enable both Bluetooth and Wi-Fi at the same time (the receiver might become unstable).
 * **Wi-Fi** - Wi-Fi mode: Off (default), Access Point, Access Point + Connect, Connect, Sync Only. More details on that below.
-* **Update FW** - **Check** shows the available firmware version; **Update** installs it (requires a Wi-Fi internet connection). See [updating over Wi-Fi](flash.md#update-over-wi-fi).
 * **About** - Informational screens (Help, Authors, System).
 
 ## Wi-Fi
@@ -97,9 +97,11 @@ The Wi-Fi mode (2.4GHz only) can be used for the following purposes (for now):
 * Download the EiBi shortwave schedule.
 * Control the receiver over [TCP](remote.md#tcp-over-wi-fi).
 * Viewing the receiver status (date/time and UTC offset, frequency, RSSI/SNR, volume, battery voltage, etc).
-* Viewing the Memory slots with saved frequencies.
+* Edit, reorder, import, and export memory slots.
 * Manage the receiver settings.
 * Upload or delete an optional [splash image](_static/splash-outdoor.png) shown when the receiver starts.
+
+Each web page has a footer showing used and free internal heap and PSRAM, measured while the page is generated.
 
 There are a couple of modes:
 
@@ -114,6 +116,7 @@ Initial configuration:
 * Enable the **AP Only** mode (the receiver will briefly display its 10.1.1.1 IP address).
 * Connect to the `ATS-Mini` access point from your phone or computer. There is no internet connection available on this access point. When connecting from a phone, it might be necessary to switch off the mobile data connection and any VPN/firewall software.
 * Open a browser and visit the following URL: <http://10.1.1.1>. The status web page should open. Alternatively, you can try the mDNS address <atsmini.local> in your browser.
+* Click the `Memory` link to edit slot names, bands, frequencies (in Hz), and modes. Use the up/down buttons to reorder slots, and press `Save` to apply changes to the receiver. `Export` downloads the current table as JSON; `Import` loads a previously exported file, including files from the legacy USB editor.
 * Click the `Config` link. Here you can configure up to three access points the receiver will try to connect to, add optional login and password to protect the memory, settings, and firmware update pages, set the UTC date/time manually or from the browser, and change the UTC offset and other settings. Enable `Scan Hidden SSIDs` only if one of the configured access points does not broadcast its network name; leaving it off makes Wi-Fi connection faster. Leave `Half-step Encoder` off for the original EC11 20C20P encoder (20 clicks, 20 pulses), and enable it for an EC11 30C15P encoder (30 clicks, 15 pulses). Half-step mode is also required for the LILYGO T-Embed SI4732 hardware variant. See [discussion #87](https://github.com/esp32-si4732/ats-mini/discussions/87) for more information.
 * After that, switch the Wi-Fi mode to **AP+Connect** or **Connect** (the receiver will briefly show its new dynamic IP address it got from a configured access point).
 * Now connect your phone/computer to the same access point and open the new URL to check whether the receiver connected to the internet.

@@ -7,7 +7,9 @@
 #include "Ota.h"
 #include "BleMode.h"
 #include "Menu.h"
+#include "Memories.h"
 #include "Patches.h"
+#include "Storage.h"
 
 #include <time.h>
 
@@ -115,25 +117,25 @@ static const char *menu[] =
 //
 
 #define MENU_BRIGHTNESS   0
-#define MENU_CALIBRATION  1
-#define MENU_RDS          2
-#define MENU_UTCOFFSET    3
-#define MENU_DATETIME     4
-#define MENU_FM_REGION    5
-#define MENU_FM_STEREO    6
-#define MENU_DSP_PATCHES  7
-#define MENU_THEME        8
-#define MENU_UI           9
-#define MENU_ZOOM         10
-#define MENU_SCROLL       11
-#define MENU_SLEEP        12
-#define MENU_SLEEPMODE    13
+#define MENU_DATETIME     1
+#define MENU_UTCOFFSET    2
+#define MENU_SLEEP        3
+#define MENU_SLEEPMODE    4
+#define MENU_THEME        5
+#define MENU_UI           6
+#define MENU_ZOOM         7
+#define MENU_SCROLL       8
+#define MENU_RDS          9
+#define MENU_FM_STEREO    10
+#define MENU_FM_REGION    11
+#define MENU_CALIBRATION  12
+#define MENU_DSP_PATCHES  13
 #define MENU_LOADEIBI     14
-#define MENU_USBMODE      15
-#define MENU_TCPMODE      16
-#define MENU_BLEMODE      17
-#define MENU_WIFIMODE     18
-#define MENU_UPDATEFW     19
+#define MENU_UPDATEFW     15
+#define MENU_USBMODE      16
+#define MENU_TCPMODE      17
+#define MENU_BLEMODE      18
+#define MENU_WIFIMODE     19
 #define MENU_ABOUT        20
 
 
@@ -145,25 +147,25 @@ int8_t settingsIdx = MENU_BRIGHTNESS;
 static const char *settings[] =
 {
   "Brightness",
-  "Calibration",
-  "RDS",
-  "UTC Offset",
   "Date/Time",
-  "FM Region",
-  "FM Stereo",
-  "DSP Patches",
+  "UTC Offset",
+  "Sleep",
+  "Sleep Mode",
   "Theme",
   "UI Layout",
   "Zoom Menu",
   "Scroll Dir.",
-  "Sleep",
-  "Sleep Mode",
+  "RDS",
+  "FM Stereo",
+  "FM Region",
+  "Calibration",
+  "DSP Patches",
   "Load EiBi",
+  "Update FW",
   "USB Port",
   "TCP Port",
   "Bluetooth",
   "Wi-Fi",
-  "Update FW",
   "About",
 };
 
@@ -199,10 +201,7 @@ uint8_t dspPatchesIdx = DSP_PATCHES_DEFAULT;
 //
 
 uint8_t memoryIdx = 0;
-Memory *memories = nullptr;
 Memory newMemory;
-
-int getTotalMemories() { return(MEMORY_COUNT); }
 
 //
 // RDS Menu
@@ -648,6 +647,7 @@ void doVolume(int16_t enc)
 {
   volume = clamp_range(volume, enc, 0, 63);
   rx.setVolume(volume);
+  if(enc) prefsRequestSave(SAVE_SETTINGS);
 }
 
 static void clickVolume(bool shortPress)
@@ -663,6 +663,7 @@ static void clickSquelch(bool shortPress)
       currentSquelch[currentMode] &= 0x80;
     else
       currentSquelch[currentMode] ^= 0x80;
+    prefsRequestSave(SAVE_SETTINGS);
   }
   else
   {
@@ -692,11 +693,13 @@ static void clickScan(bool shortPress)
 static void doTheme(int16_t enc)
 {
   themeIdx = wrap_range(themeIdx, enc, 0, getTotalThemes() - 1);
+  prefsRequestSave(SAVE_SETTINGS);
 }
 
 static void doUILayout(int16_t enc)
 {
   uiLayoutIdx = uiLayoutIdx > LAST_ITEM(uiLayoutDesc) ? UI_DEFAULT : wrap_range(uiLayoutIdx, enc, 0, LAST_ITEM(uiLayoutDesc));
+  prefsRequestSave(SAVE_SETTINGS);
 }
 
 void doAvc(int16_t enc)
@@ -720,6 +723,7 @@ void doAvc(int16_t enc)
     AmAvcIdx = newAvcIdx;
   }
   rx.setAvcAmMaxGain(newAvcIdx);
+  if(enc) prefsRequestSave(SAVE_SETTINGS);
 }
 
 static void clickAvc(bool shortPress)
@@ -737,6 +741,7 @@ void doFmRegion(int16_t enc)
   FmRegionIdx = wrap_range(FmRegionIdx, enc, 0, LAST_ITEM(fmRegions));
   if(currentMode==FM)
     rx.setFMDeEmphasis(fmRegions[FmRegionIdx].value);
+  if(enc) prefsRequestSave(SAVE_SETTINGS);
 }
 
 //
@@ -759,6 +764,7 @@ void doFmStereo(int16_t enc)
 {
   fmStereoIdx = wrap_range(fmStereoIdx, enc, 0, LAST_ITEM(fmStereoDesc));
   applyFmStereo();
+  if(enc) prefsRequestSave(SAVE_SETTINGS);
 }
 
 static uint8_t dspPatchSlots(uint8_t slots[PATCH_SET_COUNT + 1], uint8_t &selected)
@@ -793,33 +799,42 @@ void doCal(int16_t enc)
 
   // If in SSB mode set the SI4732/5 BFO value
   // This adjusts the BFO while in the calibration menu
-  if(isSSB()) updateBFO(currentBFO, true);
+  if(isSSB())
+  {
+    updateBFO(currentBFO, true);
+    if(enc) prefsRequestSave(SAVE_CUR_BAND);
+  }
 }
 
 void doBrt(int16_t enc)
 {
   currentBrt = clamp_range(currentBrt, 5*enc, 10, 255);
   if(!sleepOn()) ledcWrite(PIN_LCD_BL, currentBrt);
+  if(enc) prefsRequestSave(SAVE_SETTINGS);
 }
 
 static void doSleep(int16_t enc)
 {
   currentSleep = clamp_range(currentSleep, 5*enc, 0, 255);
+  prefsRequestSave(SAVE_SETTINGS);
 }
 
 static void doSleepMode(int16_t enc)
 {
   sleepModeIdx = wrap_range(sleepModeIdx, enc, 0, LAST_ITEM(sleepModeDesc));
+  prefsRequestSave(SAVE_SETTINGS);
 }
 
 static void doUSBMode(int16_t enc)
 {
   usbModeIdx = wrap_range(usbModeIdx, enc, 0, LAST_ITEM(usbModeDesc));
+  prefsRequestSave(SAVE_SETTINGS);
 }
 
 static void doTCPMode(int16_t enc)
 {
   tcpModeIdx = wrap_range(tcpModeIdx, enc, 0, LAST_ITEM(tcpModeDesc));
+  prefsRequestSave(SAVE_SETTINGS);
 }
 
 static void doBleMode(int16_t enc)
@@ -830,12 +845,14 @@ static void doBleMode(int16_t enc)
 static void doWiFiMode(int16_t enc)
 {
   wifiModeIdx = wrap_range(wifiModeIdx, enc, 0, LAST_ITEM(wifiModeDesc));
+  prefsRequestSave(SAVE_SETTINGS);
 }
 
 static void clickBleMode(uint8_t mode, bool shortPress)
 {
   currentCmd = CMD_NONE;
   bleModeIdx = mode;
+  prefsRequestSave(SAVE_SETTINGS);
   bleInit(mode);
 }
 
@@ -849,21 +866,25 @@ static void doRDSMode(int16_t enc)
 {
   rdsModeIdx = wrap_range(rdsModeIdx, enc, 0, LAST_ITEM(rdsMode));
   if(!(getRDSMode() & RDS_CT)) clockReset();
+  prefsRequestSave(SAVE_SETTINGS);
 }
 
 static void doUTCOffset(int16_t enc)
 {
   utcOffsetIdx = wrap_range(utcOffsetIdx, enc, 0, LAST_ITEM(utcOffsets));
+  prefsRequestSave(SAVE_SETTINGS);
 }
 
 static void doZoom(int16_t enc)
 {
   zoomMenu = !zoomMenu;
+  prefsRequestSave(SAVE_SETTINGS);
 }
 
 static void doScrollDir(int16_t enc)
 {
   scrollDirection = (scrollDirection == 1) ? -1 : 1;
+  prefsRequestSave(SAVE_SETTINGS);
 }
 
 uint8_t doAbout(int16_t enc)
@@ -910,13 +931,16 @@ bool tuneToMemory(const Memory *memory)
   // Update BFO if present in memory slot
   if(bfo) updateBFO(bfo);
 
+  // Switching bands must also save pending edits to the previous band.
+  prefsRequestSave(SAVE_SETTINGS | SAVE_BANDS);
   return(true);
 }
 
 static void doMemory(int16_t enc)
 {
   memoryIdx = wrap_range(memoryIdx, enc, 0, getTotalMemories() - 1);
-  if(!tuneToMemory(&memories[memoryIdx])) tuneToMemory(&newMemory);
+  Memory memory = getMemory(memoryIdx);
+  if(!tuneToMemory(&memory)) tuneToMemory(&newMemory);
 }
 
 static void clickMemory(uint8_t idx, bool shortPress)
@@ -927,9 +951,12 @@ static void clickMemory(uint8_t idx, bool shortPress)
   if(shortPress)
   {
     // If clicking on an empty memory slot, save to it
-    if(!memories[idx].freq) memories[idx] = newMemory;
+    Memory memory = getMemory(idx);
+    if(!memory.freq) memory = newMemory;
     // Otherwise, delete memory slot contents
-    else memories[idx].freq = 0;
+    else memory.freq = 0;
+    setMemory(idx, memory);
+    prefsRequestSave(SAVE_MEMORIES);
   }
   // On a click, do nothing, slot already activated in doMemory()
   else currentCmd = CMD_NONE;
@@ -1035,6 +1062,7 @@ void doStep(int16_t enc)
     rx.setSeekFmSpacing(steps[currentMode][idx].spacing);
   else
     rx.setSeekAmSpacing(steps[currentMode][idx].spacing);
+  if(enc) prefsRequestSave(SAVE_CUR_BAND);
 }
 
 void doAgc(int16_t enc)
@@ -1057,6 +1085,7 @@ void doAgc(int16_t enc)
 
   // Configure SI4732/5 (if agcNdx = 0, no attenuation)
   rx.setAutomaticGainControl(disableAgc, agcNdx);
+  if(enc) prefsRequestSave(SAVE_SETTINGS);
 }
 
 void doMode(int16_t enc)
@@ -1080,6 +1109,7 @@ void doMode(int16_t enc)
 
   // Enable the new band
   selectBand(bandIdx);
+  prefsRequestSave(SAVE_CUR_BAND);
 }
 
 void doSquelch(int16_t enc)
@@ -1087,6 +1117,7 @@ void doSquelch(int16_t enc)
   uint8_t squelchParam = currentSquelch[currentMode] & 0x80;
   uint8_t squelchValue = currentSquelch[currentMode] & 0x7f;
   currentSquelch[currentMode] = squelchParam | clamp_range(squelchValue, enc, 0, 0x7f);
+  if(enc) prefsRequestSave(SAVE_SETTINGS);
 }
 
 void doSoftMute(int16_t enc)
@@ -1100,6 +1131,7 @@ void doSoftMute(int16_t enc)
     softMuteMaxAttIdx = AmSoftMuteIdx = wrap_range(AmSoftMuteIdx, enc, 0, 32);
 
   rx.setAmSoftMuteMaxAttenuation(softMuteMaxAttIdx);
+  if(enc) prefsRequestSave(SAVE_SETTINGS);
 }
 
 void doBand(int16_t enc)
@@ -1113,6 +1145,7 @@ void doBand(int16_t enc)
 
   // Enable the new band
   selectBand(bandIdx);
+  prefsRequestSave(SAVE_SETTINGS | SAVE_BANDS);
 }
 
 void doBandwidth(int16_t enc)
@@ -1122,6 +1155,7 @@ void doBandwidth(int16_t enc)
   idx = wrap_range(idx, enc, 0, getLastBandwidth(currentMode));
   bands[bandIdx].bandwidthIdx = idx;
   setBandwidth();
+  if(enc) prefsRequestSave(SAVE_CUR_BAND);
 }
 
 //
@@ -1799,15 +1833,18 @@ static void drawMemory(int x, int y, int sx)
   for(int i=-2 ; i<3 ; i++)
   {
     int j = abs((memoryIdx+count+i)%count);
+    const Memory memory = getMemory(j);
     char buf[16];
     const char *text = buf;
 
-    if(!memories[j].freq)
+    if(!memory.freq)
       text = "- - -";
-    else if(memories[j].mode==FM)
-      sprintf(buf, "%3.2f %s", memories[j].freq / 1000000.0, bandModeDesc[memories[j].mode]);
+    else if(memory.name[0])
+      text = memory.name;
+    else if(memory.mode==FM)
+      sprintf(buf, "%3.2f %s", memory.freq / 1000000.0, bandModeDesc[memory.mode]);
     else
-      sprintf(buf, "%5lu %s", memories[j].freq / 1000, bandModeDesc[memories[j].mode]);
+      sprintf(buf, "%5lu %s", memory.freq / 1000, bandModeDesc[memory.mode]);
 
     if(i==0) {
       drawZoomedMenu(text);

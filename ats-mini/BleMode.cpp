@@ -132,10 +132,7 @@ int bleLoop(uint8_t bleMode)
 
   event |= REMOTE_CHANGED;
   if (input.rotation)
-  {
     event |= input.rotation << REMOTE_DIRECTION;
-    event |= REMOTE_PREFS;
-  }
   if (input.wasClicked)
     event |= REMOTE_CLICK;
   if (input.wasShortPressed)

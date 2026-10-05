@@ -2,8 +2,10 @@
 #include "Themes.h"
 #include "Utils.h"
 #include "Menu.h"
+#include "Memories.h"
 #include "Draw.h"
 #include "Remote.h"
+#include "Storage.h"
 
 static RemoteState remoteSerialState;
 
@@ -212,8 +214,11 @@ static bool remoteSetFrequency(Stream *stream)
 static void remoteGetMemories(Stream* stream)
 {
   for (uint8_t i = 0; i < getTotalMemories(); i++) {
-    if (memories[i].freq) {
-      stream->printf("#%02d,%s,%ld,%s\r\n", i + 1, bands[memories[i].band].bandName, memories[i].freq, bandModeDesc[memories[i].mode]);
+    const Memory memory = getMemory(i);
+    if (memory.freq) {
+      stream->printf("#%02d,%s,%ld,%s", i + 1, bands[memory.band].bandName, memory.freq, bandModeDesc[memory.mode]);
+      if(memory.name[0]) stream->printf(",%s", memory.name);
+      stream->println();
     }
   }
 }
@@ -221,7 +226,6 @@ static void remoteGetMemories(Stream* stream)
 static bool remoteSetMemory(Stream* stream)
 {
   stream->print('#');
-  Memory mem;
   uint32_t freq = 0;
 
   long int slot = remoteReadInteger(stream);
@@ -230,26 +234,37 @@ static bool remoteSetMemory(Stream* stream)
   if (slot < 1 || slot > getTotalMemories())
     return remoteShowError(stream, "Invalid memory slot number");
 
+  Memory mem = getMemory(slot-1);
+
   char band[8];
   remoteReadString(stream, band, 8);
   if (remoteReadChar(stream) != ',')
     return remoteShowError(stream, "Expected ','");
-  mem.band = 0xFF;
-  for (int i = 0; i < getTotalBands(); i++) {
-    if (strcmp(bands[i].bandName, band) == 0) {
-      mem.band = i;
-      break;
-    }
-  }
-  if (mem.band == 0xFF)
-    return remoteShowError(stream, "No such band");
-
   freq = remoteReadInteger(stream);
   if (remoteReadChar(stream) != ',')
     return remoteShowError(stream, "Expected ','");
 
   char mode[4];
   remoteReadString(stream, mode, 4);
+  int ch;
+  while((ch = stream->peek()) < 0);
+  if(ch == ',')
+  {
+    remoteReadChar(stream);
+    memset(mem.name, 0, sizeof(mem.name));
+    size_t length = 0;
+    while(true)
+    {
+      while((ch = stream->peek()) < 0);
+      if(ch == '\r') break;
+      remoteReadChar(stream);
+      if(ch < 0x20 || ch > 0x7e)
+        return remoteShowError(stream, "Name must contain printable ASCII characters");
+      if(length >= sizeof(mem.name) - 1)
+        return remoteShowError(stream, "Name is too long (maximum 9 characters)");
+      mem.name[length++] = ch;
+    }
+  }
   if (!expectNewline(stream))
     return remoteShowError(stream, "Expected newline");
   stream->println();
@@ -264,29 +279,22 @@ static bool remoteSetMemory(Stream* stream)
     return remoteShowError(stream, "No such mode");
 
   mem.freq = freq;
-
-  if (!isMemoryInBand(&bands[mem.band], &mem)) {
-    if (!freq) {
-      // Clear slot
-      memories[slot-1] = mem;
-      return true;
-    } else {
-      // Handle duplicate band names (15M)
-      mem.band = 0xFF;
-      for (int i = getTotalBands()-1; i >= 0; i--) {
-        if (strcmp(bands[i].bandName, band) == 0) {
-          mem.band = i;
-          break;
-        }
-      }
-      if (mem.band == 0xFF)
-        return remoteShowError(stream, "No such band");
-      if (!isMemoryInBand(&bands[mem.band], &mem))
-        return remoteShowError(stream, "Invalid frequency or mode");
+  mem.band = 0xFF;
+  bool knownBand = false;
+  for (int i = 0; i < getTotalBands(); i++) {
+    if (strcmp(bands[i].bandName, band) != 0) continue;
+    knownBand = true;
+    // Match frequency as well as name for duplicate bands (15M).
+    // A zero frequency clears the slot, so only its band name must match.
+    if (!mem.freq || isMemoryInBand(&bands[i], &mem)) {
+      mem.band = i;
+      break;
     }
   }
+  if (mem.band == 0xFF)
+    return remoteShowError(stream, knownBand ? "Invalid frequency or mode" : "No such band");
 
-  memories[slot-1] = mem;
+  setMemory(slot-1, mem);
   return true;
 }
 
@@ -342,7 +350,7 @@ static void remoteGetColorTheme(Stream* stream)
 //
 // Print current status to the remote
 //
-void remotePrintStatus(Stream* stream, RemoteState* state)
+static void remotePrintStatus(Stream* stream, RemoteState* state)
 {
   // Prepare information ready to be sent
   float remoteVoltage = batteryMonitor();
@@ -406,11 +414,9 @@ int remoteDoCommand(Stream* stream, RemoteState* state, char key)
   {
     case 'R': // Rotate Encoder Clockwise
       event |= 1 << REMOTE_DIRECTION;
-      event |= REMOTE_PREFS;
       break;
     case 'r': // Rotate Encoder Counterclockwise
       event |= -1 << REMOTE_DIRECTION;
-      event |= REMOTE_PREFS;
       break;
     case 'e': // Encoder Push Button
       event |= REMOTE_CLICK;
@@ -420,59 +426,45 @@ int remoteDoCommand(Stream* stream, RemoteState* state, char key)
       break;
     case 'B': // Band Up
       doBand(1);
-      event |= REMOTE_PREFS;
       break;
     case 'b': // Band Down
       doBand(-1);
-      event |= REMOTE_PREFS;
       break;
     case 'M': // Mode Up
       doMode(1);
-      event |= REMOTE_PREFS;
       break;
     case 'm': // Mode Down
       doMode(-1);
-      event |= REMOTE_PREFS;
       break;
     case 'S': // Step Up
       doStep(1);
-      event |= REMOTE_PREFS;
       break;
     case 's': // Step Down
       doStep(-1);
-      event |= REMOTE_PREFS;
       break;
     case 'W': // Bandwidth Up
       doBandwidth(1);
-      event |= REMOTE_PREFS;
       break;
     case 'w': // Bandwidth Down
       doBandwidth(-1);
-      event |= REMOTE_PREFS;
       break;
     case 'A': // AGC/ATTN Up
       doAgc(1);
-      event |= REMOTE_PREFS;
       break;
     case 'a': // AGC/ATTN Down
       doAgc(-1);
-      event |= REMOTE_PREFS;
       break;
     case 'V': // Volume Up
       doVolume(1);
-      event |= REMOTE_PREFS;
       break;
     case 'v': // Volume Down
       doVolume(-1);
-      event |= REMOTE_PREFS;
       break;
     case 'L': // Backlight Up
       doBrt(1);
-      event |= REMOTE_PREFS;
       break;
     case 'l': // Backlight Down
       doBrt(-1);
-      event |= REMOTE_PREFS;
       break;
     case 'O':
       sleepOn(true);
@@ -482,11 +474,9 @@ int remoteDoCommand(Stream* stream, RemoteState* state, char key)
       break;
     case 'I':
       doCal(1);
-      event |= REMOTE_PREFS;
       break;
     case 'i':
       doCal(-1);
-      event |= REMOTE_PREFS;
       break;
     case 'C':
     case 'c':
@@ -502,11 +492,11 @@ int remoteDoCommand(Stream* stream, RemoteState* state, char key)
       break;
     case '#':
       if (remoteSetMemory(stream))
-        event |= REMOTE_PREFS;
+        prefsRequestSave(SAVE_MEMORIES);
       break;
     case 'F':
       if (remoteSetFrequency(stream))
-        event |= REMOTE_PREFS;
+        prefsRequestSave(SAVE_CUR_BAND);
       break;
 
     case 'T':

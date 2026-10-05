@@ -60,6 +60,8 @@ To set Bluetooth LE and Wi-Fi TX power with `make`:
 BLE_POWER_LEVEL=ESP_PWR_LVL_N12 WIFI_POWER_LEVEL=WIFI_POWER_13dBm PORT=/dev/tty.usbmodem14401 make upload
 ```
 
+When adding, removing, or renaming firmware source or header files, update the `SRC` and `HEADERS` lists in `ats-mini/Makefile` so `make` tracks the correct build dependencies.
+
 ## Decoding stack traces
 
 To decode a stack trace (printed via serial port) use the following tool: <https://esphome.github.io/esp-stacktrace-decoder/>
@@ -86,6 +88,27 @@ To decode a stack trace (printed via serial port) use the following tool: <https
 2. Run `uv sync`
 3. Run a local webserver `uv run sphinx-autobuild docs/source docs/build` and open the http://127.0.0.1:8000 in a browser
 4. Edit the Markdown files in `docs/source` folder and immediately see your changes reflected in the browser
+
+## Web pages
+
+The web UI templates live in `ats-mini/Page*.h`. Edit the HTML, CSS, and JavaScript inside the `R"HTML(...)HTML"` raw strings; no generation step is needed before compiling.
+
+`PageCommon.h` contains the shared document layout, navigation, and styles. The other page headers contain each page and its repeated fragments. `Network.cpp` supplies the values and handles requests.
+
+The renderer in `PageTemplate.h` replaces `{{name}}` with an HTML-escaped value for text or a quoted attribute. Use `{{{name}}}` only for trusted HTML fragments rendered by the firmware. Values are inserted once, so braces inside a value are not interpreted as another placeholder. These placeholders are not intended for JavaScript or CSS values.
+
+Pages render into one output buffer. Pass repeated or nested content as a lazy fragment instead of building a separate HTML string:
+
+```cpp
+pageAppend(out, "<UL>{{{items}}}</UL>", {}, {
+  {"items", [&](String &out) {
+    for(const auto &name : names)
+      pageAppend(out, "<LI>{{name}}</LI>", {{"name", name}});
+  }}
+});
+```
+
+The second list supplies callbacks for triple-brace placeholders. Callbacks run synchronously and write to the same buffer. Values and callbacks are borrowed: construct the lists in the render call and do not store them for later use.
 
 ## Theme editor
 

@@ -3,11 +3,19 @@
 #include "Themes.h"
 #include "Utils.h"
 #include "Menu.h"
+#include "Memories.h"
 #include "Draw.h"
 #include "Splash.h"
 #include "TcpMode.h"
 #include "Ota.h"
 #include "Patches.h"
+#include "PageTemplate.h"
+#include "PageCommon.h"
+#include "PageStatus.h"
+#include "PageMemory.h"
+#include "PageConfig.h"
+#include "PageUpdate.h"
+#include "PagePatches.h"
 #include <new>
 
 #include <WiFi.h>
@@ -19,6 +27,7 @@
 #include <ESPmDNS.h>
 #include <LittleFS.h>
 #include <time.h>
+#include <esp_heap_caps.h>
 
 #define CONNECT_TIME  3000  // Time of inactivity to start connecting WiFi
 #define WIFI_MULTI_TOTAL_TIMEOUT  30000
@@ -61,6 +70,7 @@ static void wifiRegisterPowerLevelCallback();
 static void wifiPowerLevelOnEvent(WiFiEvent_t event);
 
 static void webSetConfig(AsyncWebServerRequest *request);
+static void webSetMemories(AsyncWebServerRequest *request);
 static void webUploadSplash(AsyncWebServerRequest *request, const String &filename,
                             size_t index, uint8_t *data, size_t len, bool final);
 static bool webIsAuthenticated(AsyncWebServerRequest *request);
@@ -74,12 +84,8 @@ static void webUploadPatch(AsyncWebServerRequest *request, const String &filenam
                            size_t index, uint8_t *data, size_t len, bool final);
 static bool webParseUTCDateTime(const String &text, uint32_t *epoch);
 
-static const String webInputField(const String &name, const String &value, bool pass = false);
-static const String webStyleSheet();
-static const String webPage(const String &body, const char *title = "ATS-Mini Config");
-static String webNavigation(const char *activePage);
-static const String webUtcOffsetSelector();
-static const String webThemeSelector();
+static String webPage(const char *body, const char *title, std::initializer_list<PageValue> values,
+                      std::initializer_list<PageFragment> fragments = {});
 static const String webRadioPage();
 static const String webMemoryPage();
 static const String webConfigPage();
@@ -366,10 +372,11 @@ static void webInit()
     request->send(200, "text/html", webRadioPage());
   });
 
-  server.on("/memory", HTTP_ANY, [] (AsyncWebServerRequest *request) {
+  server.on("/memory", HTTP_GET, [] (AsyncWebServerRequest *request) {
     if(!webIsAuthenticated(request)) return request->requestAuthentication();
     request->send(200, "text/html", webMemoryPage());
   });
+  server.on("/memory", HTTP_POST, webSetMemories);
 
   server.on("/config", HTTP_ANY, [] (AsyncWebServerRequest *request) {
     if(!webIsAuthenticated(request)) return request->requestAuthentication();
@@ -634,19 +641,6 @@ void webSetConfig(AsyncWebServerRequest *request)
     netRequestConnect();
 }
 
-static const String webInputField(const String &name, const String &value, bool pass)
-{
-  String newValue(value);
-
-  newValue.replace("\"", "&quot;");
-  newValue.replace("'", "&apos;");
-
-  return(
-    "<INPUT TYPE='" + String(pass? "PASSWORD":"TEXT") + "' NAME='" +
-    name + "' VALUE='" + newValue + "'>"
-  );
-}
-
 static bool webParseUTCDateTime(const String &text, uint32_t *epoch)
 {
   int year, month, day, hour, minute, second;
@@ -656,130 +650,25 @@ static bool webParseUTCDateTime(const String &text, uint32_t *epoch)
          clockUTCDateTimeToEpoch(year, month, day, hour, minute, second, epoch));
 }
 
-static const String webStyleSheet()
+static String webPage(const char *body, const char *title, std::initializer_list<PageValue> values,
+                      std::initializer_list<PageFragment> fragments)
 {
-  return
-"BODY"
-"{"
-  "margin: 0;"
-  "padding: 0;"
-"}"
-"H1"
-"{"
-  "text-align: center;"
-"}"
-"TABLE"
-"{"
-  "width: 100%;"
-  "max-width: 768px;"
-  "border: 0px;"
-  "margin-left: auto;"
-  "margin-right: auto;"
-"}"
-"TH, TD"
-"{"
-  "padding: 0.5em;"
-"}"
-".HEADING"
-"{"
-  "background-color: #80A0FF;"
-  "column-span: all;"
-  "text-align: center;"
-"}"
-"TD.LABEL"
-"{"
-  "text-align: right;"
-"}"
-"INPUT[type=text], INPUT[type=password], SELECT"
-"{"
-  "width: 95%;"
-  "padding: 0.5em;"
-"}"
-"INPUT[type=submit]"
-"{"
-  "width: 50%;"
-  "padding: 0.5em 0;"
-"}"
-".CENTER"
-"{"
-  "text-align: center;"
-"}"
-;
-}
-
-static String webNavigation(const char *activePage)
-{
-  static const struct { const char *name; const char *path; } pages[] =
-  {
-    {"Status", "/"},
-    {"Memory", "/memory"},
-    {"Config", "/config"},
-    {"Update", "/update"},
-    {"Patches", "/patches"},
-  };
-  String result = "<P ALIGN='CENTER'>";
-  for(size_t i = 0; i < sizeof(pages) / sizeof(pages[0]); i++)
-  {
-    if(i) result += "&nbsp;|&nbsp;";
-    if(!strcmp(activePage, pages[i].path)) result += pages[i].name;
-    else result += String("<A HREF='") + pages[i].path + "'>" + pages[i].name + "</A>";
-  }
-  return result + "</P>";
-}
-
-static const String webPage(const String &body, const char *title)
-{
-  return
-"<!DOCTYPE HTML>"
-"<HTML>"
-"<HEAD>"
-  "<META CHARSET='UTF-8'>"
-  "<META NAME='viewport' CONTENT='width=device-width, initial-scale=1.0'>"
-  "<TITLE>" + String(title) + "</TITLE>"
-  "<STYLE>" + webStyleSheet() + "</STYLE>"
-"</HEAD>"
-"<BODY STYLE='font-family: sans-serif;'>" + body + "</BODY>"
-"</HTML>"
-;
-}
-
-static const String webUtcOffsetSelector()
-{
-  String result = "";
-
-  for(int i=0 ; i<getTotalUTCOffsets(); i++)
-  {
-    char text[96];
-
-    sprintf(text,
-      "<OPTION VALUE='%d' DATA-MINUTES='%d'%s>%s</OPTION>",
-      i, utcOffsets[i].offset * 15, utcOffsetIdx==i? " SELECTED":"",
-      utcOffsets[i].desc
-    );
-
-    result += text;
-  }
-
-  return(result);
-}
-
-static const String webThemeSelector()
-{
-  String result = "";
-
-  for(int i=0 ; i<getTotalThemes(); i++)
-  {
-    char text[64];
-
-    sprintf(text,
-      "<OPTION VALUE='%d'%s>%s</OPTION>",
-       i, themeIdx==i? " SELECTED":"", theme[i].name
-    );
-
-    result += text;
-  }
-
-  return(result);
+  String page;
+  pageReserve(page, sizeof(pageStart) + strlen(title) + strlen(body) + sizeof(pageEnd) + 64);
+  pageAppend(page, pageStart, {{"title", title}});
+  pageAppend(page, body, values, fragments);
+  pageReserve(page, sizeof(pageEnd) + 64);
+  // Snapshot after allocating the page, before the HTTP response copies it.
+  multi_heap_info_t heap, psram;
+  heap_caps_get_info(&heap, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  heap_caps_get_info(&psram, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  pageAppend(page, pageEnd, {
+    {"heap_used", String(heap.total_allocated_bytes / 1024.0, 1)},
+    {"heap_free", String(heap.total_free_bytes / 1024.0, 1)},
+    {"psram_used", String(psram.total_allocated_bytes / 1024.0, 1)},
+    {"psram_free", String(psram.total_free_bytes / 1024.0, 1)}
+  });
+  return page;
 }
 
 static const String webRadioPage()
@@ -823,74 +712,153 @@ static const String webRadioPage()
     ssid = String(apSSID);
   }
 
-  return webPage(
-"<H1>ATS-Mini Pocket Receiver</H1>" + webNavigation("/") +
-"<TABLE COLUMNS=2>"
-"<TR>"
-  "<TD CLASS='LABEL'>IP Address</TD>"
-  "<TD><A HREF='http://" + ip + "'>" + ip + "</A> (" + ssid + ")</TD>"
-"</TR>"
-"<TR>"
-  "<TD CLASS='LABEL'>MAC Address</TD>"
-  "<TD>" + String(getMACAddress()) + "</TD>"
-"</TR>"
-"<TR>"
-  "<TD CLASS='LABEL'>Firmware</TD>"
-  "<TD>" + String(getVersion(true)) + "</TD>"
-"</TR>"
-"<TR>"
-  "<TD CLASS='LABEL'>Date/Time</TD>"
-  "<TD>" + receiverTime + "</TD>"
-"</TR>"
-"<TR>"
-  "<TD CLASS='LABEL'>Band</TD>"
-  "<TD>" + String(getCurrentBand()->bandName) + "</TD>"
-"</TR>"
-"<TR>"
-  "<TD CLASS='LABEL'>Frequency</TD>"
-  "<TD>" + freq + String(bandModeDesc[currentMode]) + "</TD>"
-"</TR>"
-"<TR>"
-  "<TD CLASS='LABEL'>Signal Strength</TD>"
-  "<TD>" + String(rssi) + "dBuV</TD>"
-"</TR>"
-"<TR>"
-  "<TD CLASS='LABEL'>Signal to Noise</TD>"
-  "<TD>" + String(snr) + "dB</TD>"
-"</TR>"
-"<TR>"
-  "<TD CLASS='LABEL'>Battery Voltage</TD>"
-  "<TD>" + String(batteryMonitor()) + "V</TD>"
-"</TR>"
-"</TABLE>"
-);
+  return webPage(pageStatus, pageStatusTitle, {
+    {"title", pageStatusTitle},
+    {"ip", ip}, {"ssid", ssid},
+    {"mac", String(getMACAddress())}, {"version", String(getVersion(true))},
+    {"time", receiverTime}, {"band", getCurrentBand()->bandName},
+    {"frequency", freq}, {"mode", bandModeDesc[currentMode]},
+    {"rssi", String(rssi)}, {"snr", String(snr)}, {"battery", String(batteryMonitor())}
+  }, {
+    {"navigation", [](String &out) { webNavigation(out, "/"); }}
+  });
+}
+
+static void webSetMemories(AsyncWebServerRequest *request)
+{
+  if(!webIsAuthenticated(request)) return request->requestAuthentication();
+
+  // Validate a complete replacement before modifying any live slots.
+  Memory *pending = static_cast<Memory *>(ps_calloc(getTotalMemories(), sizeof(Memory)));
+  if(!pending) return request->send(503, "text/plain", "Not enough memory to save the slots.");
+  const char *error = nullptr;
+  int slot = 0;
+  for(; slot<getTotalMemories() ; slot++)
+  {
+    String suffix(slot);
+    const auto *name = request->getParam("name" + suffix, true);
+    const auto *band = request->getParam("band" + suffix, true);
+    const auto *freq = request->getParam("freq" + suffix, true);
+    const auto *mode = request->getParam("mode" + suffix, true);
+    if(!name || !band || !freq || !mode)
+    {
+      error = "Missing slot fields.";
+      break;
+    }
+
+    Memory &mem = pending[slot];
+    const String &label = name->value();
+    if(label.length() >= sizeof(mem.name)) error = "Names must be at most 9 characters.";
+    for(size_t i=0 ; !error && i<label.length() ; i++)
+      if((uint8_t)label[i]<0x20 || (uint8_t)label[i]>0x7e)
+        error = "Names must contain printable ASCII characters.";
+    if(error) break;
+    memcpy(mem.name, label.c_str(), label.length());
+
+    const String &number = freq->value();
+    if(!number.length() || number.length()>10) error = "Invalid frequency in Hz.";
+    uint64_t hz = 0;
+    for(size_t i=0 ; !error && i<number.length() ; i++)
+    {
+      if(number[i]<'0' || number[i]>'9') error = "Invalid frequency in Hz.";
+      else hz = hz * 10 + number[i] - '0';
+    }
+    if(hz>UINT32_MAX) error = "Frequency is out of range.";
+    if(error) break;
+    mem.freq = hz;
+
+    mem.mode = AM;
+    if(mode->value().length() || mem.freq)
+    {
+      mem.mode = 0xff;
+      for(int i=0 ; i<getTotalModes() ; i++)
+        if(mode->value() == bandModeDesc[i]) mem.mode = i;
+      if(mem.mode == 0xff)
+      {
+        error = "Unknown mode.";
+        break;
+      }
+    }
+
+    mem.band = 0xff;
+    for(int i=0 ; i<getTotalBands() ; i++)
+    {
+      if(band->value() != bands[i].bandName) continue;
+      // Resolve duplicate band names using the frequency and mode. Check Hz
+      // before converting to the receiver's narrower frequency representation.
+      uint32_t unit = mem.mode == FM? 10000 : 1000;
+      if(mem.freq && (hz < (uint32_t)bands[i].minimumFreq * unit ||
+                     hz > (uint32_t)bands[i].maximumFreq * unit ||
+                     !isMemoryInBand(&bands[i], &mem))) continue;
+      mem.band = i;
+      break;
+    }
+    if(mem.band == 0xff)
+    {
+      if(!mem.freq && !band->value().length()) mem.band = 0;
+      else
+      {
+        error = "Frequency or mode does not match the band.";
+        break;
+      }
+    }
+  }
+
+  if(error)
+  {
+    free(pending);
+    return request->send(400, "text/html", webPage(pageMemoryError, pageMemoryTitle, {
+      {"title", pageMemoryTitle},
+      {"slot", String(slot + 1)}, {"error", error}
+    }));
+  }
+
+  setMemories(pending);
+  free(pending);
+  prefsRequestSave(SAVE_MEMORIES, true);
+  request->redirect("/memory");
 }
 
 static const String webMemoryPage()
 {
-  String items = "";
-
-  for(int j=0 ; j<MEMORY_COUNT ; j++)
-  {
-    char text[64];
-    sprintf(text, "<TR><TD CLASS='LABEL' WIDTH='10%%'>%02d</TD><TD>", j+1);
-    items += text;
-
-    if(!memories[j].freq)
-      items += "&nbsp;---&nbsp;</TD></TR>";
-    else
-    {
-      String freq = memories[j].mode == FM?
-        String(memories[j].freq / 1000000.0) + "MHz "
-      : String(memories[j].freq / 1000.0) + "kHz ";
-      items += freq + bandModeDesc[memories[j].mode] + "</TD></TR>";
-    }
-  }
-
-  return webPage(
-"<H1>ATS-Mini Pocket Receiver Memory</H1>" + webNavigation("/memory") +
-"<TABLE COLUMNS=2>" + items + "</TABLE>"
-);
+  return webPage(pageMemory, pageMemoryTitle, {
+    {"title", pageMemoryTitle}, {"toolbar", pageMemoryToolbar}
+  }, {
+    {"navigation", [](String &out) { webNavigation(out, "/memory"); }},
+    {"rows", [](String &out) {
+      for(int j=0 ; j<getTotalMemories() ; j++)
+      {
+        const Memory mem = getMemory(j);
+        const char *band = mem.freq && mem.band<getTotalBands()? bands[mem.band].bandName : "";
+        char slot[4];
+        snprintf(slot, sizeof(slot), "%02d", j+1);
+        pageAppend(out, pageMemoryRow, {
+          {"index", String(j)}, {"slot", slot}, {"name", mem.name}, {"frequency", String(mem.freq)},
+          {"up_disabled", j==0? "DISABLED" : ""},
+          {"down_disabled", j==getTotalMemories()-1? "DISABLED" : ""}
+        }, {
+          {"bands", [&](String &out) {
+            for(int i=0 ; i<getTotalBands() ; i++)
+            {
+              bool duplicate = false;
+              for(int k=0 ; k<i ; k++)
+                if(!strcmp(bands[k].bandName, bands[i].bandName)) duplicate = true;
+              if(duplicate) continue;
+              pageAppend(out, pageMemoryOption, {
+                {"value", bands[i].bandName}, {"selected", !strcmp(band, bands[i].bandName)? "SELECTED" : ""}
+              });
+            }
+          }},
+          {"modes", [&](String &out) {
+            for(int i=0 ; i<getTotalModes() ; i++)
+              pageAppend(out, pageMemoryOption, {
+                {"value", bandModeDesc[i]}, {"selected", mem.freq && mem.mode==i? "SELECTED" : ""}
+              });
+          }}
+        });
+      }
+    }}
+  });
 }
 
 const String webConfigPage()
@@ -905,129 +873,36 @@ const String webConfigPage()
   bool scanHidden = prefs.getBool("wifiscanhidden", false);
   prefs.end();
 
-  String splashImage = LittleFS.exists(SPLASH_PATH)?
-    "<IMG SRC='/splash.png?" + String(millis()) + "' ALT='Current splash screen' STYLE='max-width:100%;height:auto;'>"
-  : "Not installed";
   String splashResolution = String(spr.width()) + "x" + String(spr.height());
 
-  return webPage(
-"<H1>ATS-Mini Config</H1>" + webNavigation("/config") +
-"<FORM ACTION='/setconfig' METHOD='POST' ENCTYPE='multipart/form-data' ONSUBMIT='browserDateTime(true)'>"
-  "<TABLE COLUMNS=2>"
-  "<TR><TH COLSPAN=2 CLASS='HEADING'>WiFi Network 1</TH></TR>"
-  "<TR>"
-    "<TD CLASS='LABEL'>SSID</TD>"
-    "<TD>" + webInputField("wifissid1", ssid1) + "</TD>"
-  "</TR>"
-  "<TR>"
-    "<TD CLASS='LABEL'>Password</TD>"
-    "<TD>" + webInputField("wifipass1", pass1, true) + "</TD>"
-  "</TR>"
-  "<TR><TH COLSPAN=2 CLASS='HEADING'>WiFi Network 2</TH></TR>"
-  "<TR>"
-    "<TD CLASS='LABEL'>SSID</TD>"
-    "<TD>" + webInputField("wifissid2", ssid2) + "</TD>"
-  "</TR>"
-  "<TR>"
-    "<TD CLASS='LABEL'>Password</TD>"
-    "<TD>" + webInputField("wifipass2", pass2, true) + "</TD>"
-  "</TR>"
-  "<TR><TH COLSPAN=2 CLASS='HEADING'>WiFi Network 3</TH></TR>"
-  "<TR>"
-    "<TD CLASS='LABEL'>SSID</TD>"
-    "<TD>" + webInputField("wifissid3", ssid3) + "</TD>"
-  "</TR>"
-  "<TR>"
-    "<TD CLASS='LABEL'>Password</TD>"
-    "<TD>" + webInputField("wifipass3", pass3, true) + "</TD>"
-  "</TR>"
-  "<TR><TH COLSPAN=2 CLASS='HEADING'>This Web UI Login Credentials</TH></TR>"
-  "<TR>"
-    "<TD CLASS='LABEL'>Username</TD>"
-    "<TD>" + webInputField("username", loginUsername) + "</TD>"
-  "</TR>"
-  "<TR>"
-    "<TD CLASS='LABEL'>Password</TD>"
-    "<TD>" + webInputField("password", loginPassword, true) + "</TD>"
-  "</TR>"
-  "<TR><TH COLSPAN=2 CLASS='HEADING'>Settings</TH></TR>"
-  "<TR>"
-    "<TD CLASS='LABEL'>Scan Hidden SSIDs</TD>"
-    "<TD><INPUT TYPE='CHECKBOX' NAME='wifiscanhidden' VALUE='on'" +
-    (scanHidden? " CHECKED ":"") + "></TD>"
-  "</TR>"
-  "<TR>"
-    "<TD CLASS='LABEL'>Use Browser Date/Time</TD>"
-    "<TD><INPUT TYPE='CHECKBOX' ID='browserdatetime' ONCHANGE='browserDateTime()'></TD>"
-  "</TR>"
-  "<TR>"
-    "<TD CLASS='LABEL'>UTC Date/Time</TD>"
-    "<TD><INPUT TYPE='TEXT' ID='datetime' NAME='datetime' PLACEHOLDER='YYYY-mm-dd HH:MM:SS'></TD>"
-  "</TR>"
-  "<TR>"
-    "<TD CLASS='LABEL'>Time Zone</TD>"
-    "<TD>"
-      "<SELECT ID='utcoffset' NAME='utcoffset'>" + webUtcOffsetSelector() + "</SELECT>"
-    "</TD>"
-  "</TR>"
-  "<TR>"
-    "<TD CLASS='LABEL'>Theme</TD>"
-    "<TD>"
-      "<SELECT NAME='theme'>" + webThemeSelector() + "</SELECT>"
-    "</TD>"
-  "</TR>"
-  "<TR>"
-    "<TD CLASS='LABEL'>Reverse Scrolling</TD>"
-    "<TD><INPUT TYPE='CHECKBOX' NAME='scroll' VALUE='on'" +
-    (scrollDirection<0? " CHECKED ":"") + "></TD>"
-  "</TR>"
-  "<TR>"
-    "<TD CLASS='LABEL'>Half-step Encoder</TD>"
-    "<TD><INPUT TYPE='CHECKBOX' NAME='encoderhalfstep' VALUE='on'" +
-    (encoderHalfStep? " CHECKED ":"") + "></TD>"
-  "</TR>"
-  "<TR>"
-    "<TD CLASS='LABEL'>Zoomed Menu</TD>"
-    "<TD><INPUT TYPE='CHECKBOX' NAME='zoom' VALUE='on'" +
-    (zoomMenu? " CHECKED ":"") + "></TD>"
-  "</TR>"
-  "<TR><TH COLSPAN=2 CLASS='HEADING'>Splash Screen</TH></TR>"
-  "<TR>"
-    "<TD CLASS='LABEL'>Current Image</TD>"
-    "<TD>" + splashImage + "</TD>"
-  "</TR>"
-  "<TR>"
-    "<TD CLASS='LABEL'>Upload PNG</TD>"
-    "<TD><INPUT TYPE='FILE' NAME='splash' ACCEPT='.png'>"
-    "<BR><SMALL>Required resolution: " + splashResolution + " pixels; maximum size: 512 KB</SMALL></TD>"
-  "</TR>"
-  "<TR>"
-    "<TD CLASS='LABEL'>Delete Image</TD>"
-    "<TD><INPUT TYPE='CHECKBOX' NAME='deletesplash' VALUE='on'></TD>"
-  "</TR>"
-  "<TR><TH COLSPAN=2 CLASS='HEADING'>"
-    "<INPUT TYPE='SUBMIT' VALUE='Save'>"
-  "</TH></TR>"
-  "</TABLE>"
-"</FORM>"
-"<SCRIPT>"
-"function browserDateTime(submit)"
-"{"
-  "const enabled=document.getElementById('browserdatetime').checked;"
-  "const dateTime=document.getElementById('datetime');"
-  "const utcOffset=document.getElementById('utcoffset');"
-  "if(enabled)"
-  "{"
-    "const now=new Date();"
-    "dateTime.value=now.toISOString().slice(0,19).replace('T',' ');"
-    "const minutes=-now.getTimezoneOffset();"
-    "for(const option of utcOffset.options)"
-      "if(Number(option.dataset.minutes)===minutes) utcOffset.value=option.value;"
-  "}"
-  "dateTime.disabled=utcOffset.disabled=enabled&&!submit;"
-"}"
-"</SCRIPT>"
-);
+  return webPage(pageConfig, pageConfigTitle, {
+    {"title", pageConfigTitle},
+    {"ssid1", ssid1}, {"pass1", pass1}, {"ssid2", ssid2}, {"pass2", pass2},
+    {"ssid3", ssid3}, {"pass3", pass3}, {"username", loginUsername}, {"password", loginPassword},
+    {"scan_hidden", scanHidden? "CHECKED" : ""},
+    {"scroll", scrollDirection<0? "CHECKED" : ""},
+    {"half_step", encoderHalfStep? "CHECKED" : ""}, {"zoom", zoomMenu? "CHECKED" : ""},
+    {"resolution", splashResolution}
+  }, {
+    {"navigation", [](String &out) { webNavigation(out, "/config"); }},
+    {"utc_options", [](String &out) {
+      for(int i=0 ; i<getTotalUTCOffsets(); i++)
+        pageAppend(out, pageConfigUtcOption, {
+          {"value", String(i)}, {"minutes", String(utcOffsets[i].offset * 15)},
+          {"selected", utcOffsetIdx==i? "SELECTED" : ""}, {"label", utcOffsets[i].desc}
+        });
+    }},
+    {"theme_options", [](String &out) {
+      for(int i=0 ; i<getTotalThemes(); i++)
+        pageAppend(out, pageConfigThemeOption, {
+          {"value", String(i)}, {"selected", themeIdx==i? "SELECTED" : ""}, {"label", theme[i].name}
+        });
+    }},
+    {"splash", [](String &out) {
+      if(LittleFS.exists(SPLASH_PATH)) pageAppend(out, pageSplash, {{"version", String(millis())}});
+      else out += "Not installed";
+    }}
+  });
 }
 
 // Explicit request errors leave the active operation's status unchanged.
@@ -1037,33 +912,15 @@ static void webUpdatePage(AsyncWebServerRequest *request, const OtaStatus &statu
                     status.phase == OTA_CONNECTING || status.phase == OTA_WRITING;
   const bool complete = status.phase == OTA_COMPLETE || status.phase == OTA_REBOOT_PENDING;
   const bool available = status.phase == OTA_AVAILABLE;
-  const String refresh = complete? "<SCRIPT>setTimeout(()=>location.replace('/'),20000);</SCRIPT>" :
-                         busy? "<SCRIPT>setTimeout(()=>location.replace('/update'),1000);</SCRIPT>" : "";
-  const String page = webPage(
-"<H1>Firmware Update</H1>" + webNavigation("/update") +
-"<TABLE COLUMNS=1>"
-"<TR><TD CLASS='CENTER'>" + status.message + "</TD></TR>"
-"<TR><TH CLASS='HEADING'>"
-  "<FORM METHOD='POST' ACTION='/update'>"
-  "<BUTTON TYPE='SUBMIT' NAME='action' VALUE='" + String(available? "install" : "check") + "' STYLE='padding: 0.5em 2em;'" +
-    String(busy || complete? " DISABLED" : "") + ">" + (available? "Update" : "Check for updates") + "</BUTTON>"
-  "</FORM>"
-"</TH></TR>"
-"<TR><TD CLASS='CENTER'>"
-  "<DETAILS><SUMMARY>Manual upload</SUMMARY>"
-  "<FORM METHOD='POST' ACTION='/update/upload' ENCTYPE='multipart/form-data' ONSUBMIT='this.elements.size.value=this.elements.firmware.files[0].size;this.querySelector(\"button\").disabled=true;'>"
-  // Send the size before the file so the first upload callback can read it.
-  "<INPUT TYPE='HIDDEN' NAME='size'>"
-  "<P><INPUT TYPE='FILE' NAME='firmware' ARIA-LABEL='Firmware file' ACCEPT='.bin' REQUIRED" + String(busy || complete? " DISABLED" : "") + "></P>"
-  "<SMALL>Use the <CODE>-ota.bin</CODE> or <CODE>ats-mini.ino.bin</CODE> for your receiver variant.</SMALL>"
-  "<DIV CLASS='HEADING' STYLE='padding: 0.5em; margin-top: 1em;'>"
-  "<BUTTON TYPE='SUBMIT' STYLE='padding: 0.5em 2em;'" + String(busy || complete? " DISABLED" : "") + ">Upload</BUTTON>"
-  "</DIV>"
-  "</FORM>"
-  "</DETAILS>"
-"</TD></TR>"
-"</TABLE>" + refresh
-);
+  const char *refresh = complete? pageUpdateComplete : busy? pageUpdateBusy : "";
+  const String page = webPage(pageUpdate, pageUpdateTitle, {
+    {"title", pageUpdateTitle},
+    {"message", status.message},
+    {"action", available? "install" : "check"}, {"disabled", busy || complete? "DISABLED" : ""},
+    {"button", available? "Update" : "Check for updates"}, {"refresh", refresh}
+  }, {
+    {"navigation", [](String &out) { webNavigation(out, "/update"); }}
+  });
   if(!code) code = status.phase == OTA_FAILED? 400 : 200;
   AsyncWebServerResponse *response = request->beginResponse(code, "text/html", page);
   response->addHeader("Cache-Control", "no-store");
@@ -1171,55 +1028,49 @@ static void webPatchesPage(AsyncWebServerRequest *request)
   bool busy;
   uint8_t selected;
   patchesSnapshot(selected, busy);
-  String body = "<H1>SI4732 Patches (Experimental)</H1>" + webNavigation("/patches");
-  if(busy)
-    body += "<TABLE COLUMNS=1><TR><TD CLASS='CENTER'>A patch request is in progress.</TD></TR></TABLE>";
-  body += "<FORM METHOD='POST' ACTION='/patches'>"
-          "<INPUT TYPE='HIDDEN' NAME='action' VALUE='select'>"
-          "<TABLE COLUMNS=2>"
-          "<TR><TH COLSPAN=2 CLASS='HEADING'>Active Patch Set</TH></TR>"
-          "<TR><TD CLASS='LABEL'><LABEL FOR='patchslot'>Patch Set</LABEL></TD><TD>"
-          "<SELECT ID='patchslot' NAME='slot'" + String(busy? " DISABLED" : "") + ">";
-  for(uint8_t slot = 0; slot <= PATCH_SET_COUNT; slot++)
-  {
-    if(slot && !patchesModes(slot)) continue;
-    body += "<OPTION VALUE='" + String(slot) + "'" + String(slot == selected? " SELECTED" : "") + ">" +
-            patchSetNames[slot] + "</OPTION>";
-  }
-  body += "</SELECT></TD></TR><TR><TH COLSPAN=2 CLASS='HEADING'>"
-          "<INPUT TYPE='SUBMIT' VALUE='Apply'" + String(busy? " DISABLED" : "") + ">"
-          "</TH></TR></TABLE></FORM>";
-  for(uint8_t slot = 1; slot <= PATCH_SET_COUNT; slot++)
-  {
-    const String disabled = busy || selected == slot? " DISABLED" : "";
-    uint8_t modes = patchesModes(slot);
-    // Slot and mode precede the file so upload callbacks can read them.
-    body += "<FORM METHOD='POST' ACTION='/patches' ENCTYPE='multipart/form-data'>"
-            "<INPUT TYPE='HIDDEN' NAME='slot' VALUE='" + String(slot) + "'>"
-            "<INPUT TYPE='HIDDEN' NAME='action' VALUE='upload'>"
-            "<TABLE COLUMNS=2><TR><TH COLSPAN=2 CLASS='HEADING'>" + patchSetNames[slot] + "</TH></TR>"
-            "<TR><TD CLASS='LABEL'>Installed Patches</TD><TD>";
-    for(uint8_t mode = 0; mode < PATCH_MODE_COUNT; mode++)
-    {
-      if(mode) body += " &middot; ";
-      body += String(patchModeNames[mode]) + ((modes & (1U << mode))? ": uploaded" : ": Default");
-    }
-    body += "</TD></TR><TR><TD CLASS='LABEL'><LABEL FOR='patchmode" + String(slot) + "'>Mode</LABEL></TD>"
-            "<TD><SELECT ID='patchmode" + String(slot) + "' NAME='mode'" + disabled + ">";
-    for(uint8_t mode = 0; mode < PATCH_MODE_COUNT; mode++)
-      body += String("<OPTION>") + patchModeNames[mode] + "</OPTION>";
-    body += "</SELECT></TD></TR>"
-            "<TR><TD CLASS='LABEL'><LABEL FOR='patchfile" + String(slot) + "'>Upload Patch</LABEL></TD>"
-            "<TD><INPUT TYPE='FILE' ID='patchfile" + String(slot) + "' NAME='patch' ACCEPT='.bin'" + disabled + ">"
-            "<BR><SMALL>One .bin file at a time; maximum size: 32 KiB</SMALL></TD></TR>";
-    if(modes)
-      body += "<TR><TD CLASS='LABEL'><LABEL FOR='patchdelete" + String(slot) + "'>Delete set</LABEL></TD>"
-              "<TD><INPUT TYPE='CHECKBOX' ID='patchdelete" + String(slot) + "' NAME='delete' VALUE='on'" + disabled + "></TD></TR>";
-    body += "<TR><TH COLSPAN=2 CLASS='HEADING'><INPUT TYPE='SUBMIT' VALUE='Save'" + disabled + ">"
-            "</TH></TR></TABLE></FORM>";
-  }
-
-  AsyncWebServerResponse *response = request->beginResponse(200, "text/html", webPage(body, "SI4732 Patches (Experimental)"));
+  const String page = webPage(pagePatches, pagePatchesTitle, {
+    {"title", pagePatchesTitle}, {"busy", busy? pagePatchesBusy : ""},
+    {"disabled", busy? "DISABLED" : ""}
+  }, {
+    {"navigation", [](String &out) { webNavigation(out, "/patches"); }},
+    {"options", [&](String &out) {
+      for(uint8_t slot = 0; slot <= PATCH_SET_COUNT; slot++)
+      {
+        if(slot && !patchesModes(slot)) continue;
+        pageAppend(out, pagePatchOption, {
+          {"value", String(slot)}, {"selected", slot == selected? "SELECTED" : ""}, {"label", patchSetNames[slot]}
+        });
+      }
+    }},
+    {"sets", [&](String &out) {
+      for(uint8_t slot = 1; slot <= PATCH_SET_COUNT; slot++)
+      {
+        const char *disabled = busy || selected == slot? "DISABLED" : "";
+        uint8_t modes = patchesModes(slot);
+        String installed;
+        for(uint8_t mode = 0; mode < PATCH_MODE_COUNT; mode++)
+        {
+          if(mode) installed += " · ";
+          installed += patchModeNames[mode];
+          installed += (modes & (1U << mode))? ": uploaded" : ": Default";
+        }
+        pageAppend(out, pagePatchSet, {
+          {"slot", String(slot)}, {"name", patchSetNames[slot]}, {"installed", installed}, {"disabled", disabled}
+        }, {
+          {"options", [](String &out) {
+            for(uint8_t mode = 0; mode < PATCH_MODE_COUNT; mode++)
+              pageAppend(out, pagePatchOption, {
+                {"value", patchModeNames[mode]}, {"selected", ""}, {"label", patchModeNames[mode]}
+              });
+          }},
+          {"delete", [&](String &out) {
+            if(modes) pageAppend(out, pagePatchDelete, {{"slot", String(slot)}, {"disabled", disabled}});
+          }}
+        });
+      }
+    }}
+  });
+  AsyncWebServerResponse *response = request->beginResponse(200, "text/html", page);
   response->addHeader("Cache-Control", "no-store");
   if(busy) response->addHeader("Refresh", "2; url=/patches");
   request->send(response);
