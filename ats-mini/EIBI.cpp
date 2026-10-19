@@ -400,6 +400,7 @@ bool eibiLoadSchedule()
   drawScreen();
 
   // Open HTTP connection to EiBi site
+  http.setUserAgent(getUserAgent());
   http.begin(EIBI_URL);
   if(http.GET() != HTTP_CODE_OK)
   {
@@ -491,7 +492,7 @@ bool eibiLoadSchedule()
   LittleFS.rename(TEMP_PATH, EIBI_PATH);
 
   // Success
-  identifyFrequency(currentFrequency + currentBFO / 1000);
+  identifyFrequency(currentFrequency);
   statusShow(eibiMessage, "DONE!");
   return(true);
 }

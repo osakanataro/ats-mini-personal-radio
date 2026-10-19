@@ -18,6 +18,7 @@
 #include "BleMode.h"
 #include "TcpMode.h"
 #include "Splash.h"
+#include "Web.h"
 #include <stdlib.h>
 #include <time.h>
 
@@ -29,9 +30,7 @@
 #define DEFAULT_SLEEP            0  // Default sleep interval, range = 0 (off) to 255 in steps of 5
 #define RDS_CHECK_TIME         250  // Increased from 90
 #define SEEK_TIMEOUT        600000  // Max seek timeout (ms)
-#define NTP_CHECK_TIME       60000  // NTP time refresh period (ms)
 #define SCHEDULE_CHECK_TIME   2000  // How often to identify the same frequency (ms)
-#define BACKGROUND_REFRESH_TIME 5000    // Background screen refresh time. Covers the situation where there are no other events causing a refresh
 
 // =================================
 // CONSTANTS AND VARIABLES
@@ -43,20 +42,19 @@ int8_t agcNdx = 0;
 int8_t softMuteMaxAttIdx = 4;
 
 volatile bool seekStop = false; // G8PTN: Added flag to abort seeking on rotary encoder detection
-bool pushAndRotate = false;   // Push and rotate is active, ignore the long press
+bool pushAndRotate = false;   // Combined physical/BLE gesture state for the display
 
 long elapsedRSSI = millis();
 long elapsedButton = millis();
 
 long lastStrengthCheck = millis();
 long lastRDSCheck = millis();
-long lastNTPCheck = millis();
 long lastScheduleCheck = millis();
 
 long elapsedCommand = millis();
 volatile int16_t encoderCount = 0;
 volatile int16_t encoderCountAccel = 0;
-uint16_t currentFrequency;
+uint32_t currentFrequency;
 
 // AGC/ATTN index per mode (FM/AM/SSB)
 int8_t FmAgcIdx = 0;                    // Default FM  AGGON  : Range = 0 to 37, 0 = AGCON, 1 - 27 = ATTN 0 to 26
@@ -96,7 +94,6 @@ uint32_t background_timer = millis();   // Background screen refresh timer.
 //
 uint16_t currentCmd  = CMD_NONE;
 uint8_t  currentMode = FM;
-int16_t  currentBFO  = 0;
 
 uint8_t  rssi = 0;
 uint8_t  snr  = 0;
@@ -137,7 +134,7 @@ void setup()
 
   // Firmware owns the mute pin so library power-up cannot release it
   pinMode(AUDIO_MUTE, OUTPUT);
-  digitalWrite(AUDIO_MUTE, HIGH);
+  digitalWrite(AUDIO_MUTE, LOW); // Keep inactive until the hardware setting is loaded.
 
   // Enable SI4732 VDD
   pinMode(PIN_POWER_ON, OUTPUT);
@@ -232,6 +229,11 @@ void setup()
     while(digitalRead(ENCODER_PUSH_BUTTON)==LOW) delay(100);
   }
 
+  digitalWrite(AUDIO_MUTE, audioClamp ? HIGH : LOW);
+
+  // Start a fresh countdown using the configured duration.
+  offTimerRestart();
+
   // If loading memories fails, save default memories
   if(!prefsLoad(SAVE_MEMORIES|SAVE_VERIFY)) prefsSave(SAVE_MEMORIES);
 
@@ -245,7 +247,7 @@ void setup()
   patchesInit();
 
   // SI4732 STARTUP!
-  selectBand(bandIdx, false);
+  initVfo();
   delay(50);
   rx.setVolume(volume);
   rx.setMaxSeekTime(SEEK_TIMEOUT);
@@ -355,23 +357,53 @@ uint32_t consumeEncoderCounts()
   return ((uint32_t)encCountAccel << 16) | ((uint16_t)encCount & 0xFFFF);
 }
 
+// Select the nearest point on the 28 kHz SSB tuning grid within the band.
+// Return receiver units: 10 kHz for FM, 1 kHz for AM/SSB.
+uint16_t getReceiverFrequency(uint32_t freq)
+{
+  if(isSSB())
+  {
+    const Band *band = getCurrentBand();
+    const uint32_t spacing = 2 * MAX_BFO;
+    freq = ((freq + MAX_BFO) / spacing) * spacing;
+    freq = constrain(freq, band->minimumFreq, band->maximumFreq);
+  }
+  return freqFromHz(freq, currentMode);
+}
+
+int getCurrentBFO()
+{
+  return isSSB()? (int32_t)currentFrequency - (int32_t)freqToHz(getReceiverFrequency(currentFrequency), currentMode) : 0;
+}
+
+static void applyBFO()
+{
+  const Band *band = getCurrentBand();
+  int calibration = currentMode == USB? band->usbCal : currentMode == LSB? band->lsbCal : 0;
+  rx.setSSBBfo(-(getCurrentBFO() + calibration));
+}
+
 //
 // Switch radio to given band
 //
-void useBand(const Band *band)
+void useBand(Band *band)
 {
-  // Set current frequency and mode, reset BFO
-  currentFrequency = band->currentFreq;
+  // Convert the saved Hz frequency to receiver units and restore SSB fine tuning.
   currentMode = band->bandMode;
-  currentBFO = 0;
+  uint16_t receiverFreq = getReceiverFrequency(band->currentFreq);
+  currentFrequency = isSSB()? band->currentFreq : freqToHz(receiverFreq, currentMode);
+  // AM/FM discard fractions smaller than a receiver unit.
+  band->currentFreq = currentFrequency;
+  uint16_t minFreq = freqFromHz(band->minimumFreq, currentMode);
+  uint16_t maxFreq = freqFromHz(band->maximumFreq, currentMode);
   ssbAvcHold = false;
 
   if(band->bandMode==FM)
   {
     // rx.setMaxDelaySetFrequency(60);
-    rx.setFM(band->minimumFreq, band->maximumFreq, band->currentFreq, getCurrentStep()->step);
+    rx.setFM(minFreq, maxFreq, receiverFreq, freqFromHz(getCurrentStep()->step, currentMode));
     // rx.setTuneFrequencyAntennaCapacitor(0);
-    rx.setSeekFmLimits(band->minimumFreq, band->maximumFreq);
+    rx.setSeekFmLimits(minFreq, maxFreq);
 
     // More sensitive seek thresholds
     // https://github.com/pu2clr/SI4735/issues/7#issuecomment-810963604
@@ -390,7 +422,7 @@ void useBand(const Band *band)
     // rx.setMaxDelaySetFrequency(80);
     if(band->bandMode==AM)
     {
-      rx.setAM(band->minimumFreq, band->maximumFreq, band->currentFreq, getCurrentStep()->step);
+      rx.setAM(minFreq, maxFreq, receiverFreq, freqFromHz(getCurrentStep()->step, currentMode));
       // More sensitive seek thresholds
       // https://github.com/pu2clr/SI4735/issues/7#issuecomment-810963604
       rx.setSeekAmRssiThreshold(10); // default is 25
@@ -399,18 +431,12 @@ void useBand(const Band *band)
     else
     {
       // Configure SI4732 for SSB (SI4732 step not used, set to 0)
-      rx.setSSB(band->minimumFreq, band->maximumFreq, band->currentFreq, 0, currentMode);
+      rx.setSSB(minFreq, maxFreq, receiverFreq, 0, currentMode);
       // Initialize SSB with automatic AVC and AFC disabled
       rx.setSSBConfig(getCurrentBandwidth()->idx, 1, 0, 1, 0, 1);
       // G8PTN: Commented out
       //rx.setSsbSoftMuteMaxAttenuation(softMuteMaxAttIdx);
-      // To move frequency forward, need to move the BFO backwards
-      if (currentMode == USB)
-        rx.setSSBBfo(-(currentBFO + band->usbCal));
-      else if (currentMode == LSB)
-        rx.setSSBBfo(-(currentBFO + band->lsbCal));
-      else
-        rx.setSSBBfo(-currentBFO);  // No calibration if not USB/LSB
+      applyBFO();
     }
 
     // Set the tuning capacitor for SW or MW/LW
@@ -421,7 +447,7 @@ void useBand(const Band *band)
     // G8PTN: Set GPIO1 = 1
     rx.setGpio(1, 0, 0);
     // Consider the range all defined current band
-    rx.setSeekAmLimits(band->minimumFreq, band->maximumFreq);
+    rx.setSeekAmLimits(minFreq, maxFreq);
   }
 
   // Set step and spacing based on mode (FM, AM, SSB)
@@ -440,77 +466,11 @@ void useBand(const Band *band)
 }
 
 //
-// Tune using BFO, using algorithm from Goshante's ATS-20_EX firmware
+// Tune to a frequency in Hz. SSB uses a fixed tuning grid and a derived BFO.
 //
-bool updateBFO(int newBFO, bool wrap)
+bool updateFrequency(int64_t newFreq, bool wrap)
 {
   Band *band = getCurrentBand();
-  int newFreq = currentFrequency;
-
-  // No BFO outside SSB modes
-  if(!isSSB()) newBFO = 0;
-
-  // If new BFO exceeds allowed bounds...
-  if(newBFO > MAX_BFO || newBFO < -MAX_BFO)
-  {
-    // Compute correction
-    int fCorrect = (newBFO / MAX_BFO) * MAX_BFO;
-    // Correct new frequency and BFO
-    newFreq += fCorrect / 1000;
-    newBFO  -= fCorrect;
-  }
-
-  // Do not let new frequency exceed band limits
-  int f = newFreq * 1000 + newBFO;
-  if(f < band->minimumFreq * 1000)
-  {
-    if(!wrap) return false;
-    newFreq = band->maximumFreq;
-    newBFO  = 0;
-  }
-  else if(f > band->maximumFreq * 1000)
-  {
-    if(!wrap) return false;
-    newFreq = band->minimumFreq;
-    newBFO  = 0;
-  }
-
-  // If need to change frequency...
-  if(newFreq != currentFrequency)
-  {
-    // Apply new frequency
-    rx.setFrequency(newFreq);
-
-    // Re-apply to remove noise
-    doAgc(0);
-    // Update current frequency
-    currentFrequency = rx.getFrequency();
-  }
-
-  // Update current BFO
-  currentBFO = newBFO;
-
-  // To move frequency forward, need to move the BFO backwards
-  if (currentMode == USB)
-    rx.setSSBBfo(-(currentBFO + band->usbCal));
-  else if (currentMode == LSB)
-    rx.setSSBBfo(-(currentBFO + band->lsbCal));
-  else
-    rx.setSSBBfo(-currentBFO);  // No calibration if not USB/LSB
-
-  // Save current band frequency, w.r.t. new BFO value
-  band->currentFreq = currentFrequency + currentBFO / 1000;
-  return true;
-}
-
-//
-// Tune to a new frequency, resetting BFO if present
-//
-bool updateFrequency(int newFreq, bool wrap)
-{
-  Band *band = getCurrentBand();
-
-  // Do not let new frequency exceed band limits
   if(newFreq < band->minimumFreq)
   {
     if(!wrap) return false; else newFreq = band->maximumFreq;
@@ -520,17 +480,16 @@ bool updateFrequency(int newFreq, bool wrap)
     if(!wrap) return false; else newFreq = band->minimumFreq;
   }
 
-  // Set new frequency
-  rx.setFrequency(newFreq);
+  uint16_t receiverFreq = getReceiverFrequency(newFreq);
+  if(!isSSB() || receiverFreq != getReceiverFrequency(currentFrequency))
+  {
+    rx.setFrequency(receiverFreq);
+    if(isSSB()) doAgc(0);
+  }
 
-  // Clear BFO, if present
-  if(currentBFO) updateBFO(0, true);
-
-  // Update current frequency
-  currentFrequency = rx.getFrequency();
-
-  // Save current band frequency
-  band->currentFreq = currentFrequency + currentBFO / 1000;
+  currentFrequency = isSSB()? newFreq : freqToHz(rx.getFrequency(), currentMode);
+  if(isSSB()) applyBFO();
+  band->currentFreq = currentFrequency;
   return true;
 }
 
@@ -562,7 +521,7 @@ bool consumeAbortPending()
 // This function is called by the seek function process.
 void showFrequencySeek(uint16_t freq)
 {
-  currentFrequency = freq;
+  currentFrequency = freqToHz(freq, currentMode);
   drawScreen();
 }
 
@@ -571,13 +530,13 @@ void showFrequencySeek(uint16_t freq)
 //
 bool doSeek(int16_t enc, int16_t enca)
 {
-  // disable amp to avoid sound artifacts
-  muteOn(MUTE_TEMP, true);
+  // Silence seek audio using the configured hardware mute method.
+  muteOn(MUTE_TEMP, true, !audioClamp);
   if(seekMode() == SEEK_DEFAULT)
   {
     if(isSSB())
     {
-      updateBFO(currentBFO + enca * getCurrentStep()->step, true);
+      updateFrequency(currentFrequency + (int64_t)enca * getCurrentStep()->step, true);
     }
     else
     {
@@ -585,10 +544,12 @@ bool doSeek(int16_t enc, int16_t enca)
       clearStationInfo();
       rssi = snr = 0;
 
-      // Clear stale abort state before starting seek
-      consumeAbortPending();
-      rx.seekStationProgress(showFrequencySeek, consumeAbortPending, enc>0? 1 : 0);
-      updateFrequency(rx.getFrequency(), true);
+      // Clear only the encoder latch. Pending remote input cancels the seek
+      // and is consumed without executing its command.
+      seekStop = false;
+      if(!consumeAbortPending())
+        rx.seekStationProgress(showFrequencySeek, consumeAbortPending, enc>0? 1 : 0);
+      updateFrequency(freqToHz(rx.getFrequency(), currentMode), true);
     }
   }
   else if(seekMode() == SEEK_SCHEDULE && enc)
@@ -599,19 +560,18 @@ bool doSeek(int16_t enc, int16_t enca)
 
     size_t offset = -1;
     const StationSchedule *schedule = enc > 0 ?
-      eibiNext(currentFrequency + currentBFO / 1000, hour, minute, &offset) :
-      eibiPrev(currentFrequency + currentBFO / 1000, hour, minute, &offset);
+      eibiNext(freqFromHz(currentFrequency, currentMode), hour, minute, &offset) :
+      eibiPrev(freqFromHz(currentFrequency, currentMode), hour, minute, &offset);
 
-    if(schedule) updateFrequency(schedule->freq, false);
+    if(schedule) updateFrequency(schedule->freq * 1000, false);
   }
 
   // Clear current station name and information
   clearStationInfo();
   // Check for named frequencies
-  identifyFrequency(currentFrequency + currentBFO / 1000);
+  identifyFrequency(currentFrequency);
   // Will need a redraw
-  // enable amp
-  muteOn(MUTE_TEMP, false);
+  muteOn(MUTE_TEMP, false, !audioClamp);
   return(true);
 }
 
@@ -620,36 +580,16 @@ bool doSeek(int16_t enc, int16_t enca)
 //
 bool doTune(int16_t enc)
 {
-  //
-  // SSB tuning
-  //
-  if(isSSB())
-  {
-    uint32_t step = getCurrentStep()->step;
-    uint32_t stepAdjust = (currentFrequency * 1000 + currentBFO) % step;
-    step = !stepAdjust? step : enc>0? step - stepAdjust : stepAdjust;
-
-    updateBFO(currentBFO + enc * step, true);
-  }
-
-  //
-  // Normal tuning
-  //
-  else
-  {
-    uint16_t step = getCurrentStep()->step;
-    uint16_t stepAdjust = currentFrequency % step;
-    stepAdjust = (currentMode==FM) && (step==20)? (stepAdjust+10) % step : stepAdjust;
-    step = !stepAdjust? step : enc>0? step - stepAdjust : stepAdjust;
-
-    // Tune to a new frequency
-    updateFrequency(currentFrequency + step * enc, true);
-  }
+  int32_t step = getCurrentStep()->step;
+  int32_t stepAdjust = currentFrequency % step;
+  if(currentMode == FM && step == 200000) stepAdjust = (stepAdjust + 100000) % step;
+  step = !stepAdjust? step : enc>0? step - stepAdjust : stepAdjust;
+  updateFrequency(currentFrequency + (int64_t)step * enc, true);
 
   // Clear current station name and information
   clearStationInfo();
   // Check for named frequencies
-  identifyFrequency(currentFrequency + currentBFO / 1000);
+  identifyFrequency(currentFrequency);
   // Will need a redraw
   return(true);
 }
@@ -659,28 +599,13 @@ bool doTune(int16_t enc)
 //
 bool doDigit(int16_t enc)
 {
-  bool updated = false;
-
-  // SSB tuning
-  if(isSSB())
-  {
-    updated = updateBFO(currentBFO + enc * getFreqInputStep(), false);
-  }
-
-  //
-  // Normal tuning
-  //
-  else
-  {
-    // Tune to a new frequency
-    updated = updateFrequency(currentFrequency + enc * getFreqInputStep(), false);
-  }
+  bool updated = updateFrequency(currentFrequency + (int64_t)enc * getFreqInputStep(), false);
 
   if (updated) {
     // Clear current station name and information
     clearStationInfo();
     // Check for named frequencies
-    identifyFrequency(currentFrequency + currentBFO / 1000);
+    identifyFrequency(currentFrequency);
   }
 
   // Will need a redraw
@@ -691,24 +616,16 @@ bool doDigit(int16_t enc)
 bool clickFreq(bool shortPress)
 {
   if (shortPress) {
-    bool updated = false;
+    bool updated = updateFrequency(currentFrequency - currentFrequency % getFreqInputStep(), false);
 
-     // SSB tuning
-     if(isSSB()) {
-       updated = updateBFO(currentBFO - (currentFrequency * 1000 + currentBFO) % getFreqInputStep(), false);
-     } else {
-       // Normal tuning
-       updated = updateFrequency(currentFrequency - currentFrequency % getFreqInputStep(), false);
-     }
-
-     if (updated) {
-       prefsRequestSave(SAVE_CUR_BAND);
-       // Clear current station name and information
-       clearStationInfo();
-       // Check for named frequencies
-       identifyFrequency(currentFrequency + currentBFO / 1000);
-     }
-     return true;
+    if (updated) {
+      prefsRequestSave(SAVE_CUR_BAND);
+      // Clear current station name and information
+      clearStationInfo();
+      // Check for named frequencies
+      identifyFrequency(currentFrequency);
+    }
+    return true;
   }
   return false;
 }
@@ -760,202 +677,139 @@ bool processRssiSnr()
   return needRedraw;
 }
 
+// Shared by the physical encoder, BLE HID, and ad hoc R/r commands.
+bool handleRotation(int16_t enc, int16_t accelerated, bool pressed)
+{
+  if(!enc || (sleepOn() && sleepModeIdx == SLEEP_LOCKED)) return false;
+  bool changed = false;
+  if(pressed)
+  {
+    switch(currentCmd)
+    {
+      case CMD_NONE:
+        currentCmd = CMD_FREQ;
+        changed = true;
+        break;
+      case CMD_FREQ:
+        doSelectDigit(enc);
+        changed = true;
+        break;
+      case CMD_SEEK:
+        changed = doTune(enc);
+        prefsRequestSave(SAVE_CUR_BAND);
+        break;
+    }
+  }
+  else
+  {
+    switch(currentCmd)
+    {
+      case CMD_NONE:
+        // The dial controls the volume in the normal mode
+        currentCmd = CMD_VOLUME;
+        doVolume(accelerated);
+        changed = true;
+        // Volume has changed
+        prefsRequestSave(SAVE_SETTINGS);
+        break;
+      case CMD_SCAN:
+        changed = doTune(accelerated);
+        prefsRequestSave(SAVE_CUR_BAND);
+        break;
+      case CMD_FREQ:
+        changed = doDigit(enc);
+        prefsRequestSave(SAVE_CUR_BAND);
+        break;
+      case CMD_SEEK:
+        changed = doSeek(enc, accelerated);
+        prefsRequestSave(SAVE_CUR_BAND);
+        break;
+      default:
+        changed = doSideBar(currentCmd, enc, accelerated);
+        break;
+    }
+  }
+  elapsedSleep = elapsedCommand = millis();
+  return changed;
+}
+
+// Shared by the physical button, BLE HID, and ad hoc e/E commands.
+bool handleClick(bool shortPress)
+{
+  elapsedSleep = elapsedCommand = millis();
+  if(sleepOn())
+  {
+    if(currentSleep)
+      sleepOn(false);
+    else if(sleepModeIdx == SLEEP_UNLOCKED)
+    {
+      if(shortPress && currentCmd == CMD_NONE)
+        currentCmd = CMD_VOLUME;
+      else if(currentCmd == CMD_VOLUME)
+        clickHandler(currentCmd, shortPress);
+    }
+    else return false;
+  }
+  else if(currentCmd == CMD_NONE || currentCmd == CMD_VOLUME)
+  {
+    // Any press that is not a long press opens the station list,
+    // both from the normal mode and from the volume it falls back to
+    enterPresetMode();
+  }
+  else if(!clickHandler(currentCmd, shortPress))
+  {
+    // Deactivate modal mode
+    currentCmd = CMD_NONE;
+  }
+  // Waking the display or loading schedules can take time.
+  elapsedSleep = elapsedCommand = millis();
+  return true;
+}
+
 //
 // Main event loop
 //
 void loop()
 {
-  uint32_t currentTime = millis();
+  webScreenshotTick();
+  offTimerTick();
   bool needRedraw = false;
-
   uint32_t encCounts = consumeEncoderCounts();
   int16_t encCount = (int16_t)(encCounts & 0xFFFF);
   int16_t encCountAccel = (int16_t)(encCounts >> 16);
+  ButtonTracker::State button = pb1.update(digitalRead(ENCODER_PUSH_BUTTON) == LOW);
 
-  ButtonTracker::State pb1st = pb1.update(digitalRead(ENCODER_PUSH_BUTTON) == LOW);
+  if(encCount && sleepOn() && sleepModeIdx == SLEEP_LOCKED)
+    encCount = encCountAccel = 0;
+  // Keep gesture ownership separate: releasing one control must not clear
+  // a held gesture on the other, or affect physical long-press handling.
+  static bool physicalPushAndRotate = false;
+  if(encCount && button.isPressed) physicalPushAndRotate = true;
+  if(!button.isPressed) physicalPushAndRotate = false;
 
-  // if(encCount && getCpuFrequencyMhz()!=240) setCpuFrequencyMhz(240);
-
-  // Receive and execute serial command
-  int ser_event = serialLoop(usbModeIdx);
-  needRedraw |= !!(ser_event & REMOTE_CHANGED);
-  pb1st.isPressed |= !!(ser_event & REMOTE_PRESSED);
-  pb1st.wasClicked |= !!(ser_event & REMOTE_CLICK);
-  pb1st.wasShortPressed |= !!(ser_event & REMOTE_SHORT_PRESS);
-  int ser_direction = ser_event >> REMOTE_DIRECTION;
-  encCount = ser_direction? ser_direction : encCount;
-  encCountAccel = ser_direction? ser_direction : encCountAccel;
-
-  // Receive and execute BLE command
-  int ble_event = bleLoop(bleModeIdx);
-  needRedraw |= !!(ble_event & REMOTE_CHANGED);
-  pb1st.isPressed |= !!(ble_event & REMOTE_PRESSED);
-  pb1st.wasClicked |= !!(ble_event & REMOTE_CLICK);
-  pb1st.wasShortPressed |= !!(ble_event & REMOTE_SHORT_PRESS);
-  int ble_direction = ble_event >> REMOTE_DIRECTION;
-  encCount = ble_direction? ble_direction : encCount;
-  encCountAccel = ble_direction? ble_direction : encCountAccel;
-
-  // Receive and execute TCP command
-  int tcp_event = tcpLoop(tcpModeIdx);
-  needRedraw |= !!(tcp_event & REMOTE_CHANGED);
-  pb1st.isPressed |= !!(tcp_event & REMOTE_PRESSED);
-  pb1st.wasClicked |= !!(tcp_event & REMOTE_CLICK);
-  pb1st.wasShortPressed |= !!(tcp_event & REMOTE_SHORT_PRESS);
-  int tcp_direction = tcp_event >> REMOTE_DIRECTION;
-  encCount = tcp_direction? tcp_direction : encCount;
-  encCountAccel = tcp_direction? tcp_direction : encCountAccel;
-
-  // Block encoder rotation when in the locked sleep mode
-  if(encCount && sleepOn() && sleepModeIdx==SLEEP_LOCKED) encCount = encCountAccel = 0;
-
-  // Activate push and rotate mode (can span multiple loop iterations until the button is released)
-  if (encCount && pb1st.isPressed) pushAndRotate = true;
-
-  // Deactivate push and rotate mode as soon as the button is released so
-  // click handling in this loop iteration follows the normal path.
-  if(!pb1st.isPressed && pushAndRotate)
+  if(encCount)
+    needRedraw |= handleRotation(encCount, encCountAccel, button.isPressed);
+  else if(!physicalPushAndRotate && button.isLongPressed)
   {
-    pushAndRotate = false;
-    needRedraw = true;
+    sleepOn(!sleepOn());
+    elapsedSleep = elapsedCommand = millis();
   }
+  else if(!physicalPushAndRotate && (button.wasClicked || button.wasShortPressed))
+    needRedraw |= handleClick(button.wasShortPressed);
 
-  // If push and rotate mode is active...
-  if(pushAndRotate)
-  {
-    // If encoder has been rotated
-    if(encCount)
-    {
-      switch(currentCmd)
-      {
-        case CMD_NONE:
-          // Activate frequency input mode
-          currentCmd = CMD_FREQ;
-          needRedraw = true;
-          break;
-        case CMD_FREQ:
-          // Select digit
-          doSelectDigit(encCount);
-          needRedraw = true;
-          break;
-        case CMD_SEEK:
-          // Normal tuning in seek mode
-          needRedraw |= doTune(encCount);
-          // Current frequency may have changed
-          prefsRequestSave(SAVE_CUR_BAND);
-          break;
-      }
-    }
-    // Reset timeouts while push and rotate is active
-    elapsedSleep = elapsedCommand = currentTime;
-  }
-  else
-  {
-    // If encoder has been rotated
-    if(encCount)
-    {
-      switch(currentCmd)
-      {
-        case CMD_NONE:
-          // The dial controls the volume in the normal mode
-          currentCmd = CMD_VOLUME;
-          doVolume(encCountAccel);
-          needRedraw = true;
-          // Volume has changed
-          prefsRequestSave(SAVE_SETTINGS);
-          break;
-        case CMD_SCAN:
-          // Tuning
-          needRedraw |= doTune(encCountAccel);
-          // Current frequency may have changed
-          prefsRequestSave(SAVE_CUR_BAND);
-          break;
-        case CMD_FREQ:
-          // Digit tuning
-          needRedraw |= doDigit(encCount);
-          // Current frequency may have changed
-          prefsRequestSave(SAVE_CUR_BAND);
-          break;
-        case CMD_SEEK:
-          // Seek mode
-          needRedraw |= doSeek(encCount, encCountAccel);
-          // Seek can take long time, renew the timestamp
-          currentTime = millis();
-          // Current frequency may have changed
-          prefsRequestSave(SAVE_CUR_BAND);
-          break;
-        default:
-          // Side bar menus / settings
-          needRedraw |= doSideBar(currentCmd, encCount, encCountAccel);
-          break;
-      }
-
-      // Reset timeouts
-      elapsedSleep = elapsedCommand = currentTime;
-    }
-    else if(pb1st.isLongPressed)
-    {
-      // Encoder is being LONG PRESSED: TOGGLE DISPLAY
-      sleepOn(!sleepOn());
-      // CPU sleep can take long time, renew the timestamps
-      elapsedSleep = elapsedCommand = currentTime = millis();
-
-    }
-    else if(pb1st.wasClicked || pb1st.wasShortPressed)
-    {
-      // Encoder click or short press
-      // Reset timeouts
-      elapsedSleep = elapsedCommand = currentTime;
-
-      // If in locked/unlocked sleep mode
-      if(sleepOn())
-      {
-        // If sleep timeout is enabled, exit it via button press of any duration
-        // (users don't need to figure out that a long press is required to wake up the device)
-        if(currentSleep)
-        {
-          sleepOn(false);
-          needRedraw = true;
-        }
-        else if(sleepModeIdx == SLEEP_UNLOCKED)
-        {
-          // Allow to adjust the volume in sleep mode
-          if(pb1st.wasShortPressed && currentCmd==CMD_NONE)
-            currentCmd = CMD_VOLUME;
-          else if(currentCmd==CMD_VOLUME)
-            clickHandler(currentCmd, pb1st.wasShortPressed);
-
-          needRedraw = true;
-        }
-      }
-      else if(currentCmd==CMD_NONE || currentCmd==CMD_VOLUME)
-      {
-        // Any press that is not a long press opens the station list,
-        // both from the normal mode and from the volume it falls back to
-        enterPresetMode();
-        needRedraw = true;
-      }
-      else if(clickHandler(currentCmd, pb1st.wasShortPressed))
-      {
-        // Command handled, redraw screen
-        needRedraw = true;
-
-        // EiBi can take long time, renew the timestamps
-        elapsedSleep = elapsedCommand = currentTime = millis();
-      }
-      else
-      {
-        // Deactivate modal mode
-        currentCmd = CMD_NONE;
-        needRedraw = true;
-      }
-    }
-  }
+  // Each source executes independently, so simultaneous inputs are not lost.
+  needRedraw |= serialLoop(usbModeIdx);
+  needRedraw |= bleLoop(bleModeIdx);
+  needRedraw |= tcpLoop(tcpModeIdx);
+  uint32_t currentTime = millis();
+  const bool heldRotation = physicalPushAndRotate || blePushAndRotate();
+  needRedraw |= heldRotation != pushAndRotate;
+  pushAndRotate = heldRotation;
+  if(pushAndRotate) elapsedSleep = elapsedCommand = currentTime;
 
   // Disable commands control
   if((currentTime - elapsedCommand) > ELAPSED_COMMAND)
   {
-    // if(getCpuFrequencyMhz()!=80) setCpuFrequencyMhz(80);
     if(currentCmd != CMD_NONE && currentCmd != CMD_SEEK && currentCmd != CMD_SCAN && currentCmd != CMD_MEMORY)
     {
       currentCmd = CMD_NONE;
@@ -989,24 +843,17 @@ void loop()
   // Periodically check schedule
   if((currentTime - lastScheduleCheck) > SCHEDULE_CHECK_TIME)
   {
-    needRedraw |= identifyFrequency(currentFrequency + currentBFO / 1000, true);
+    needRedraw |= identifyFrequency(currentFrequency, true);
     lastScheduleCheck = currentTime;
-  }
-
-  // Periodically synchronize time via NTP
-  if((currentTime - lastNTPCheck) > NTP_CHECK_TIME)
-  {
-    needRedraw |= ntpSyncTime();
-    lastNTPCheck = currentTime;
   }
 
   // Tick preferences time, saving changes when there has
   // been no activity for a while
   prefsTickTime();
 
-  // Tick NETWORK time, connecting to WiFi if requested
-  netTickTime();
-  needRedraw |= patchesTick();
+  // Apply queued web operations, then advance WiFi and time synchronization.
+  needRedraw |= webTick();
+  needRedraw |= netTickTime();
 
   // Update clock display
   needRedraw |= clockUpdate();

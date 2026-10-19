@@ -47,7 +47,8 @@
 #define CMD_UPDATEFW   0x3200 // |
 #define CMD_FM_STEREO  0x3300 // |
 #define CMD_DSP_PATCHES 0x3400 // |
-#define CMD_ABOUT      0x3500 //-+
+#define CMD_ABOUT      0x3500 // |
+#define CMD_OFFTIMER   0x3600 //-+
 
 // UI Layouts
 #define UI_DEFAULT  0
@@ -69,9 +70,18 @@ typedef struct
 
 typedef struct
 {
-  int step;         // Step
+  uint32_t freq;    // Frequency in Hz
+  uint8_t band;
+  uint8_t mode;
+  int8_t stepIdx;
+  int8_t bandwidthIdx;
+} VfoState;
+
+typedef struct
+{
+  int step;         // Tuning step in Hz
   const char *desc; // Step description
-  uint8_t spacing;  // Seek spacing
+  uint8_t spacing;  // Receiver seek spacing: 10 kHz for FM, 1 kHz for AM/SSB
 } Step;
 
 typedef struct
@@ -89,19 +99,21 @@ extern uint8_t memoryIdx;
 extern const UTCOffset utcOffsets[];
 extern const char *bandModeDesc[];
 extern const FMRegion fmRegions[];
+extern const char *const fmStereoDesc[];
+extern const char *const sleepModeDesc[];
+extern const char *const uiLayoutDesc[];
+extern const char *const usbModeDesc[];
+extern const char *const tcpModeDesc[];
+extern const char *const bleModeDesc[];
+extern const char *const wifiModeDesc[];
+extern const RDSMode rdsMode[];
 extern int bandIdx;
+extern VfoState vfos[2];
+extern uint8_t vfoIdx;
+extern bool vfoInitialized;
 
-// These are menu commands
-static inline bool isMenuMode(uint16_t cmd)
-{
-  return((cmd>=CMD_BAND) && (cmd<CMD_SETTINGS));
-}
-
-// These are settings
-static inline bool isSettingsMode(uint16_t cmd)
-{
-  return((cmd>=CMD_SETTINGS) && (cmd<CMD_ABOUT));
-}
+void initVfo();
+VfoState captureVfo();
 
 uint8_t seekMode(bool toggle = false);
 void drawSideBar(uint16_t cmd, int x, int y, int sx);
@@ -113,12 +125,21 @@ void selectBand(uint8_t idx, bool drawLoadingPatch = true);
 void applyFmStereo();
 int getTotalBands();
 int getTotalModes();
+int getTotalFMRegions();
+int getTotalFMStereoModes();
+int getTotalSleepModes();
+int getTotalUILayouts();
+int getTotalUSBModes();
+int getTotalTCPModes();
+int getTotalBluetoothModes();
+int getTotalWiFiModes();
 Band *getCurrentBand();
 uint8_t getFreqInputPos();
 int getFreqInputStep();
 const Step *getCurrentStep();
 const Bandwidth *getCurrentBandwidth();
 uint8_t getRDSMode();
+int getTotalRDSModes();
 
 int8_t getCurrentUTCOffset();
 int getTotalUTCOffsets();
@@ -128,6 +149,7 @@ void doAgc(int16_t enc);
 void doAvc(int16_t enc);
 void doFmRegion(int16_t enc);
 void doFmStereo(int16_t enc);
+void doRDSMode(int16_t enc);
 void doBandwidth(int16_t enc);
 void doVolume(int16_t enc);
 void doBrt(int16_t enc);

@@ -31,16 +31,18 @@ OPTIONS = \
 	--warnings all
 
 HEADERS = \
+	Parser.h ParserTypes.h ParserUtils.h ParserAdhoc.h \
 	Common.h Themes.h Menu.h Memories.h Storage.h Display.h Rotary.h \
 	Utils.h Button.h EIBI.h Remote.h BleMode.h TcpMode.h BlePeripheral.h \
 	BleUartPeripheral.h BleCentral.h BleHidCentral.h \
-	SI4735-fixed.h patch_init.h PatchParser.h Patches.h Splash.h Ota.h \
+	SI4735-fixed.h patch_init.h PatchParser.h Patches.h Splash.h Ota.h Web.h \
 	$(wildcard Page*.h)
 
 SRC = \
+	Parser.cpp ParserAdhoc.cpp \
 	$(INO) Utils.cpp Rotary.cpp Button.cpp Draw.cpp Menu.cpp Memories.cpp \
 	Station.cpp Battery.cpp Storage.cpp Themes.cpp Remote.cpp \
-	Network.cpp Patches.cpp Ota.cpp Splash.cpp EIBI.cpp Scan.cpp About.cpp BleMode.cpp TcpMode.cpp \
+	Network.cpp Web.cpp Patches.cpp Ota.cpp Splash.cpp EIBI.cpp Scan.cpp About.cpp BleMode.cpp TcpMode.cpp \
 	BlePeripheral.cpp BleUartPeripheral.cpp \
 	BleCentral.cpp BleHidCentral.cpp \
 	Layout-Default.cpp Layout-SMeter.cpp
@@ -66,4 +68,16 @@ clean:
 	rm -Rf ./build/
 
 
-.PHONY: all help build upload clean
+build/TestParser: tests/TestParser.cpp Parser.cpp Parser.h ParserTypes.h ParserUtils.h
+	mkdir -p build
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -std=c++11 -Wall -Wextra -UNDEBUG tests/TestParser.cpp Parser.cpp $(LDFLAGS) -o $@
+
+build/TestParserAdhoc: tests/TestParserAdhoc.cpp ParserAdhoc.cpp ParserAdhoc.h Parser.cpp Parser.h ParserTypes.h ParserUtils.h Themes.h
+	mkdir -p build
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -std=c++11 -Wall -Wextra -UNDEBUG tests/TestParserAdhoc.cpp ParserAdhoc.cpp Parser.cpp $(LDFLAGS) -o $@
+
+test: build/TestParser build/TestParserAdhoc
+	./build/TestParser
+	./build/TestParserAdhoc
+
+.PHONY: all help build upload clean test

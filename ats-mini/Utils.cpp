@@ -1,4 +1,8 @@
-#include "driver/rtc_io.h"
+#include <driver/rtc_io.h>
+#include <driver/gpio.h>
+#include <esp_timer.h>
+#include "Storage.h"
+#include "BleMode.h"
 #include "Common.h"
 #include "Themes.h"
 #include "Button.h"
@@ -13,6 +17,69 @@ extern ButtonTracker pb1;
 
 // Current sleep status, returned by sleepOn()
 static bool sleep_on = false;
+
+// esp_timer includes time spent in light sleep and is independent of the clock.
+uint16_t offTimerMinutes = 0;
+static int64_t offTimerDeadline = 0;
+
+static int64_t offTimerRemainingUs()
+{
+  int64_t remaining = offTimerDeadline - esp_timer_get_time();
+  return offTimerDeadline && remaining > 0 ? remaining : 0;
+}
+
+void offTimerRestart()
+{
+  offTimerDeadline = offTimerMinutes ? esp_timer_get_time() + (int64_t)offTimerMinutes * 60000000 : 0;
+}
+
+uint16_t offTimerRemainingMinutes()
+{
+  return (offTimerRemainingUs() + 59999999) / 60000000;
+}
+
+static void holdOutputLow(int pin)
+{
+  if(pin < 0) return;
+  pinMode(pin, OUTPUT);
+  digitalWrite(pin, LOW);
+  gpio_hold_en((gpio_num_t)pin);
+}
+
+void receiverShutdown()
+{
+  muteOn(MUTE_FORCE, true, true);
+  netStop();
+  bleStop();
+  prefsSave();
+  rx.powerDown();
+  ledcWrite(PIN_LCD_BL, 0);
+  tft.sleep();
+  delay(120);
+
+  // Keep the receiver supply, amplifier, and backlight off in deep sleep.
+  ledcDetach(PIN_LCD_BL);
+  holdOutputLow(PIN_LCD_BL);
+  holdOutputLow(PIN_AMP_EN);
+  holdOutputLow(PIN_POWER_ON);
+  gpio_deep_sleep_hold_en();
+
+  // Discard both the encoder wake and any pending light-sleep timer wake.
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+  rtc_gpio_pullup_dis((gpio_num_t)ENCODER_PUSH_BUTTON);
+  rtc_gpio_pulldown_dis((gpio_num_t)ENCODER_PUSH_BUTTON);
+  rtc_gpio_deinit((gpio_num_t)ENCODER_PUSH_BUTTON);
+  pinMode(ENCODER_PUSH_BUTTON, INPUT);
+  pinMode(ENCODER_PIN_A, INPUT);
+  pinMode(ENCODER_PIN_B, INPUT);
+  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_OFF);
+  esp_deep_sleep_start();
+}
+
+void offTimerTick()
+{
+  if(offTimerDeadline && !offTimerRemainingUs()) receiverShutdown();
+}
 
 // Time
 static bool clockHasBeenSet = false;
@@ -65,6 +132,14 @@ const char *getVersion(bool shorter)
 }
 
 //
+// HTTP User-Agent for downloads
+//
+String getUserAgent()
+{
+  return("ATS-Mini/" + String(getVersion(true)));
+}
+
+//
 // Get MAC address
 //
 const char *getMACAddress()
@@ -90,10 +165,11 @@ const char *getMACAddress()
 
 //
 // Mute sound on (x=1) or off (x=0), or get current status (x=2)
+// With a hardware clamp, leave the amplifier powered to avoid an enable thump.
 // Do not call this too often because a short PIN_AMP_EN impulse can trigger amplifier mode D,
 // see the NS4160 datasheet https://esp32-si4732.github.io/ats-mini/hardware.html#datasheets
 //
-bool muteOn(uint8_t mode, int x)
+bool muteOn(uint8_t mode, int x, bool muteAmp)
 {
   // Current mute status
   static bool muted = false;
@@ -158,21 +234,18 @@ bool muteOn(uint8_t mode, int x)
   }
 
   if(mute) {
-    // Disable audio amplifier to silence speaker
-    if(PIN_AMP_EN >= 0) digitalWrite(PIN_AMP_EN, LOW);
-    // Activate the mute circuit
-    digitalWrite(AUDIO_MUTE, HIGH);
+    if(muteAmp && PIN_AMP_EN >= 0) digitalWrite(PIN_AMP_EN, LOW);
+    if(audioClamp) digitalWrite(AUDIO_MUTE, HIGH);
     delay(50);
     rx.setAudioMute(true);
   }
 
   if(unmute) {
-    // Deactivate the mute circuit
-    digitalWrite(AUDIO_MUTE, LOW);
+    if(audioClamp) digitalWrite(AUDIO_MUTE, LOW);
     delay(50);
     rx.setAudioMute(false);
     // Enable audio amplifier to restore speaker output
-    if(PIN_AMP_EN >= 0) digitalWrite(PIN_AMP_EN, HIGH);
+    if(muteAmp && PIN_AMP_EN >= 0) digitalWrite(PIN_AMP_EN, HIGH);
   }
 
   switch(mode) {
@@ -215,12 +288,19 @@ bool sleepOn(int x)
 
       while(true)
       {
+        offTimerTick();
+        bool timedWake = offTimerDeadline != 0;
+        // Never miss expiry if the deadline passes between this and the tick.
+        if(timedWake) esp_sleep_enable_timer_wakeup(max(offTimerRemainingUs(), (int64_t)1));
         esp_sleep_enable_ext0_wakeup((gpio_num_t)ENCODER_PUSH_BUTTON, LOW);
         rtc_gpio_pullup_en((gpio_num_t)ENCODER_PUSH_BUTTON);
         rtc_gpio_pulldown_dis((gpio_num_t)ENCODER_PUSH_BUTTON);
         esp_light_sleep_start();
 
-        // Waking up here
+        // A timer wake shuts down without restoring the display or networking.
+        if(timedWake) esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+        offTimerTick();
+        if(esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER) continue;
         if(currentSleep) break; // Short click is enough to exit from sleep if timeout is enabled
 
         // Wait for a long press, otherwise enter the sleep again
@@ -340,6 +420,13 @@ bool clockUTCDateTimeToEpoch(int year, int month, int day, int hour, int minute,
   return(true);
 }
 
+// SNTP has already updated system time; do not set it again from a stale sample.
+void clockTimeSynchronized()
+{
+  clockHasBeenSet = true;
+  identifyFrequency(currentFrequency);
+}
+
 void clockReset()
 {
   clockHasBeenSet = false;
@@ -367,22 +454,21 @@ bool clockSetEpoch(uint32_t epoch)
   clockHasBeenSet = true;
 
   if(changed)
-    identifyFrequency(currentFrequency + currentBFO / 1000);
+    identifyFrequency(currentFrequency);
 
   return(changed);
 }
 
 //
-// Check if given frequency belongs to given band
+// Check if given frequency in Hz belongs to given band
 //
-bool isFreqInBand(const Band *band, uint16_t freq)
+bool isFreqInBand(const Band *band, uint32_t freqHz)
 {
-  return((freq>=band->minimumFreq) && (freq<=band->maximumFreq));
+  return((freqHz>=band->minimumFreq) && (freqHz<=band->maximumFreq));
 }
 
 //
 // Convert a frequency from Hz to mode-specific units
-// (TODO: use Hz across the whole codebase)
 //
 uint16_t freqFromHz(uint32_t freq, uint8_t mode)
 {
@@ -395,14 +481,6 @@ uint16_t freqFromHz(uint32_t freq, uint8_t mode)
 uint32_t freqToHz(uint16_t freq, uint8_t mode)
 {
   return(mode == FM ? freq * 10000 : freq * 1000);
-}
-
-//
-// Extract BFO from a frequency in Hz
-//
-uint16_t bfoFromHz(uint32_t freq)
-{
-  return(freq % 1000);
 }
 
 //
