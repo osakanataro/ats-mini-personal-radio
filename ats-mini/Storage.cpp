@@ -158,18 +158,11 @@ bool prefsLoadMemory(uint8_t idx, bool openPrefs)
 
   if(result)
   {
-    bool validName = false;
-    for(size_t i=0 ; i<sizeof(memory.name) ; i++)
-    {
-      unsigned char c = memory.name[i];
-      if(!c)
-      {
-        validName = true;
-        break;
-      }
-      if(c<0x20 || c>0x7e) break;
-    }
-    if(!validName) memset(memory.name, 0, sizeof(memory.name));
+    // Shorter blobs come from firmware that stored fewer name bytes; the rest
+    // of the field is already zeroed, so only the terminator has to be there.
+    memory.name[sizeof(memory.name)-1] = '\0';
+    if(utf8Validate(memory.name, strlen(memory.name), MEMORY_NAME_CHARS)<0)
+      memset(memory.name, 0, sizeof(memory.name));
     setMemory(idx, memory);
   }
 

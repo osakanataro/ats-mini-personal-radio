@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "Display.h"
+#include "ParserTypes.h"
 #include <SI4735-fixed.h>
 
 static constexpr uint16_t DISPLAY_WIDTH  = 320;
@@ -15,6 +16,7 @@ static constexpr const lgfx::IFont* FONT_DEFAULT = &lgfx::fonts::Font0;  // 6x8 
 static constexpr const lgfx::IFont* FONT_SMALL   = &lgfx::fonts::Font2;  // 16px general UI text
 static constexpr const lgfx::IFont* FONT_LARGE   = &lgfx::fonts::Font4;  // 26px values and titles
 static constexpr const lgfx::IFont* FONT_DIGITS  = &lgfx::fonts::Font7;  // 48px 7-segment digits
+static constexpr const lgfx::IFont* FONT_JA      = &lgfx::fonts::efontJA_16; // 16px Japanese text
 
 #define RECEIVER_DESC  "ESP32-SI4732 Receiver"
 #define RECEIVER_NAME  "ATS-Mini"
@@ -151,7 +153,7 @@ typedef struct __attribute__((packed))
   uint32_t freq;          // Frequency (Hz)
   uint8_t  band;          // Band
   uint8_t  mode;          // Modulation
-  char     name[10];      // Name
+  char     name[MEMORY_NAME_SIZE]; // Name (UTF-8)
 } Memory;
 
 typedef struct

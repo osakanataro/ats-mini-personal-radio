@@ -1,6 +1,10 @@
 #ifndef PAGE_MEMORY_H
 #define PAGE_MEMORY_H
 
+// The character limit appears literally in the markup and the script below,
+// where the template substitution is not available.
+static_assert(MEMORY_NAME_CHARS == 9, "Update the name limit in this page too");
+
 #include <Arduino.h>
 
 static const char pageMemoryTitle[] PROGMEM = "ATS-Mini Memory";
@@ -26,7 +30,7 @@ static const char pageMemory[] PROGMEM = R"HTML(<STYLE>
 </STYLE>
 <H1>{{title}}</H1>
 {{{navigation}}}
-<P CLASS="MEMORY-HELP">Edit frequencies in Hz (0 clears a slot). Names: up to 9 printable ASCII characters.
+<P CLASS="MEMORY-HELP">Edit frequencies in Hz (0 clears a slot). Names: up to 9 characters, Japanese included.
 Use the up/down buttons to reorder slots. Press Save to apply changes.</P>
 <FORM ID="memories" METHOD="post" ACTION="/memory" AUTOCOMPLETE="on" ONINPUT="changed()">
   {{{toolbar}}}
@@ -53,6 +57,10 @@ const bandNames = Array.from(cell(rows[0], 'band').options, option => option.val
 const modeNames = Array.from(cell(rows[0], 'mode').options, option => option.value);
 const read = () => rows.map(row => Object.fromEntries(fields.map(field =>
   [field, field === 'freq' ? Number(cell(row, field).value) : cell(row, field).value])));
+// Count characters, not bytes, and reject controls and anything the receiver
+// has no glyph for, which is everything outside the Basic Multilingual Plane
+const nameIsValid = name => Array.from(name).length <= 9 &&
+  !/[\0-\x1f\x7f]/.test(name) && !/[\u{10000}-\u{10ffff}]/u.test(name);
 
 function changed() {
   form.querySelectorAll('.MEMORY-STATE').forEach(label => label.textContent = 'Unsaved changes');
@@ -66,7 +74,7 @@ function validateImport(data) {
     const name = m?.name === undefined ? '' : m.name;
     if(!m || !bandNames.includes(m.band) ||
        !modeNames.includes(m.mode) ||
-       typeof name !== 'string' || !/^[\x20-\x7e]{0,9}$/.test(name) ||
+       typeof name !== 'string' || !nameIsValid(name) ||
        !Number.isInteger(m.freq) || m.freq < 0 || m.freq > 4294967295)
       throw Error('Slot ' + (i + 1) + ': invalid memory.');
     return {band: m.band, freq: m.freq, mode: m.mode, name};
@@ -123,7 +131,7 @@ static const char pageMemoryToolbar[] PROGMEM = R"HTML(<DIV CLASS="MEMORY-NAV">
 
 static const char pageMemoryRow[] PROGMEM = R"HTML(<TR>
   <TH SCOPE="row">{{slot}}</TH>
-  <TD><INPUT DATA-FIELD="name" NAME="name{{index}}" VALUE="{{name}}" ARIA-LABEL="Name" SIZE="9" MAXLENGTH="9" PATTERN="[ -~]{0,9}"></TD>
+  <TD><INPUT DATA-FIELD="name" NAME="name{{index}}" VALUE="{{name}}" ARIA-LABEL="Name" SIZE="9" MAXLENGTH="9"></TD>
   <TD><SELECT DATA-FIELD="band" NAME="band{{index}}" ARIA-LABEL="Band"><OPTION VALUE=""></OPTION>{{{bands}}}</SELECT></TD>
   <TD><INPUT DATA-FIELD="freq" NAME="freq{{index}}" VALUE="{{frequency}}" ARIA-LABEL="Frequency in Hz" TYPE="number" MIN="0" MAX="4294967295" REQUIRED></TD>
   <TD><SELECT DATA-FIELD="mode" NAME="mode{{index}}" ARIA-LABEL="Mode"><OPTION VALUE=""></OPTION>{{{modes}}}</SELECT></TD>

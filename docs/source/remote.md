@@ -131,7 +131,7 @@ The ad hoc protocol is the main remote-control protocol. It can be used over:
 | <kbd>@</kbd> | Get Theme           | Print the current color theme                                                                    |
 | <kbd>^</kbd> | Set Theme           | Set the current color theme as a list of HEX numbers (effective until a power cycle)             |
 
-Memory names can contain up to 9 printable ASCII characters. Omit the name field to keep the existing name, or append a comma with no name to clear it (for example, `#01,VHF,107900000,FM,`). The `$` command includes non-empty names in its output.
+Memory names can contain up to 9 printable characters, encoded as UTF-8, so Japanese names work as well. Characters outside the Basic Multilingual Plane are rejected because the bundled font has no glyphs for them. Omit the name field to keep the existing name, or append a comma with no name to clear it (for example, `#01,VHF,107900000,FM,`). The `$` command includes non-empty names in its output.
 
 End `F` and `#` commands with CR, LF, or CRLF.
 

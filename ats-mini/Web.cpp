@@ -674,10 +674,11 @@ static void webSetMemories(AsyncWebServerRequest *request)
 
     Memory &mem = pending[slot];
     const String &label = name->value();
-    if(label.length() >= sizeof(mem.name)) error = "Names must be at most 9 characters.";
-    for(size_t i=0 ; !error && i<label.length() ; i++)
-      if((uint8_t)label[i]<0x20 || (uint8_t)label[i]>0x7e)
-        error = "Names must contain printable ASCII characters.";
+    if(label.length() >= sizeof(mem.name))
+      error = "Names must be at most " MEMORY_NAME_CHARS_STR " characters.";
+    else if(utf8Validate(label.c_str(), label.length(), MEMORY_NAME_CHARS)<0)
+      error = "Names must be at most " MEMORY_NAME_CHARS_STR
+              " printable characters, encoded as UTF-8.";
     if(error) break;
     memcpy(mem.name, label.c_str(), label.length());
 

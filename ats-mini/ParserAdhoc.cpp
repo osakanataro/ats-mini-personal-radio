@@ -60,8 +60,9 @@ ParseResult parseAdhoc(ByteSpan frame, AdhocCommand& out) {
     if (band.size == 0 || mode.size == 0) return ParseResult::InvalidSyntax;
     if (!copy(band, out.band) || !copy(mode, out.mode)) return ParseResult::InvalidArgument;
     if (out.has_name) {
-      for (size_t i = 0; i < cursor.rest.size; ++i) {
-        if (cursor.rest.data[i] < 0x20 || cursor.rest.data[i] > 0x7e) return ParseResult::InvalidArgument;
+      const char* text = reinterpret_cast<const char*>(cursor.rest.data);
+      if (utf8Validate(text, cursor.rest.size, MEMORY_NAME_CHARS) < 0) {
+        return ParseResult::InvalidArgument;
       }
       if (!copy(cursor.rest, out.name)) return ParseResult::InvalidArgument;
     }

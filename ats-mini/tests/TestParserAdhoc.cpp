@@ -215,6 +215,39 @@ static void testTruncatedThemeRecovery() {
   }
 }
 
+// Names are UTF-8, limited to nine characters within the Basic Multilingual
+// Plane, which is what the bundled Japanese font can draw.
+static void testUtf8Names() {
+  AdhocCommand command;
+
+  // Nine full-width characters is the limit, and fits the field exactly.
+  const std::string nine = "\u30a2\u30a4\u30a6\u30a8\u30aa\u30ab\u30ad\u30af\u30b1";
+  assert(parseAdhoc(bytes("#01,VHF,107900000,FM," + nine + "\r"), command) == ParseResult::Ready);
+  assert(command.has_name && command.name == nine);
+  assert(nine.size() + 1 == sizeof(command.name));
+
+  // Mixed width and a lone multibyte character both pass.
+  for (const char* name : {"FM \u6771\u4eac", "\u65e5"}) {
+    assert(parseAdhoc(bytes(std::string("#01,VHF,107900000,FM,") + name + "\r"), command) == ParseResult::Ready);
+    assert(command.has_name && std::strcmp(command.name, name) == 0);
+  }
+
+  const std::string rejected[] = {
+    nine + "\u30b3",       // Ten characters
+    "\xe6\x9d",             // Truncated sequence
+    "\xe6\x9d\x2f",          // Bad continuation byte
+    "\x80\x9d\xb1",          // Continuation byte as the lead
+    "\xf0\x9f\x98\x80",       // Four byte sequence, no glyph for it
+    "\xc0\xaf",             // Overlong encoding
+    "\xed\xa0\x80",          // UTF-16 surrogate
+    "\xe0\x80\xaf",          // Overlong three byte encoding
+  };
+  for (const std::string& name : rejected) {
+    assert(parseAdhoc(bytes("#01,VHF,107900000,FM," + name + "\r"), command) ==
+           ParseResult::InvalidArgument);
+  }
+}
+
 int main() {
   testSingleByteCommands();
   testFrequency();
@@ -224,4 +257,5 @@ int main() {
   testOverflowRecovery();
   testTheme();
   testTruncatedThemeRecovery();
+  testUtf8Names();
 }

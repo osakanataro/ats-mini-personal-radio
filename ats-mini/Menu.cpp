@@ -1086,15 +1086,19 @@ static int getPresetSlot(int idx)
   return(-1);
 }
 
-// Compose the list label for a memory slot
-static void getPresetLabel(const Memory &memory, char *buf, size_t size)
+// Compose the list label for a memory slot. A named slot is labelled by its
+// name, so the result may point into the slot rather than into buf, the way
+// drawMemory() labels the same slots.
+static const char *getPresetLabel(const Memory &memory, char *buf, size_t size)
 {
-  if(memory.name[0])
-    snprintf(buf, size, "%s", memory.name);
-  else if(memory.mode==FM)
+  if(memory.name[0]) return(memory.name);
+
+  if(memory.mode==FM)
     snprintf(buf, size, "%3.2f %s", memory.freq / 1000000.0, bandModeDesc[memory.mode]);
   else
     snprintf(buf, size, "%5lu %s", memory.freq / 1000, bandModeDesc[memory.mode]);
+
+  return(buf);
 }
 
 void enterPresetMode()
@@ -1960,7 +1964,8 @@ static void drawMemory(int x, int y, int sx)
     }
 
     spr.setTextDatum(MC_DATUM);
-    spr.drawString(text, 40+x+(sx/2), 64+y+(i*16), FONT_SMALL);
+    // Both fonts are 16px, so the list spacing is unchanged
+    spr.drawString(text, 40+x+(sx/2), 64+y+(i*16), utf8IsWide(text)? FONT_JA : FONT_SMALL);
   }
 }
 
@@ -1980,13 +1985,15 @@ static void drawPreset(int x, int y, int sx)
     // This list does not wrap around
     if(j<0 || j>=total) continue;
 
+    // The label may point into this copy, so it has to outlive the drawing
+    Memory memory = {};
     int slot = getPresetSlot(j);
     if(slot<0)
       text = "Menu >";
     else
     {
-      getPresetLabel(getMemory(slot), buf, sizeof(buf));
-      text = buf;
+      memory = getMemory(slot);
+      text = getPresetLabel(memory, buf, sizeof(buf));
     }
 
     if(i==0) {
@@ -1997,7 +2004,8 @@ static void drawPreset(int x, int y, int sx)
     }
 
     spr.setTextDatum(MC_DATUM);
-    spr.drawString(text, 40+x+(sx/2), 64+y+(i*16), FONT_SMALL);
+    // Both fonts are 16px, so the list spacing is unchanged
+    spr.drawString(text, 40+x+(sx/2), 64+y+(i*16), utf8IsWide(text)? FONT_JA : FONT_SMALL);
   }
 }
 

@@ -51,7 +51,7 @@ struct AdhocCommand {
   uint32_t frequency;
   char mode[MODE_LEN];
   bool has_name;
-  char name[10]; // Omitted preserves the name; present but empty clears it.
+  char name[MEMORY_NAME_SIZE]; // Omitted preserves the name; present but empty clears it.
   uint16_t theme_words[THEME_WORDS];
 };
 

@@ -96,7 +96,8 @@ void drawZoomedMenu(const char *text, bool force)
   spr.fillSmoothRoundRect(RDS_OFFSET_X - 72 + 1, RDS_OFFSET_Y - 3 + 1, 152, 26, 4, TH.menu_bg);
   spr.setTextDatum(TC_DATUM);
   spr.setTextColor(TH.menu_item);
-  spr.drawString(text, RDS_OFFSET_X + 5, RDS_OFFSET_Y, FONT_LARGE);
+  if(utf8IsWide(text)) spr.drawString(text, RDS_OFFSET_X + 5, RDS_OFFSET_Y + 6, FONT_JA);
+  else spr.drawString(text, RDS_OFFSET_X + 5, RDS_OFFSET_Y, FONT_LARGE);
   spr.drawRoundRect(RDS_OFFSET_X - 72, RDS_OFFSET_Y - 3, 154, 28, 4, TH.menu_border);
 }
 
@@ -356,7 +357,10 @@ void drawStationName(const char *name, int x, int y)
 {
   spr.setTextDatum(TC_DATUM);
   spr.setTextColor(TH.rds_text);
-  spr.drawString(name, x, y, FONT_LARGE);
+  // The Japanese font is 16px, so nudge it down to sit on the same baseline
+  // as the 26px font used for ASCII names
+  if(utf8IsWide(name)) spr.drawString(name, x, y + 6, FONT_JA);
+  else spr.drawString(name, x, y, FONT_LARGE);
 }
 
 //

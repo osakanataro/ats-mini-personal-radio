@@ -79,7 +79,7 @@ const char *getStationName()
   // Live FM identification takes precedence over a saved name.
   if(currentMode==FM && station[strspn(station, " ")]) return(station);
 
-  static char memoryName[10];
+  static char memoryName[MEMORY_NAME_SIZE];
   if(findMemoryName(currentFrequency, currentMode, bandIdx, memoryIdx, memoryName))
     return(memoryName);
 
