@@ -25,7 +25,7 @@ static constexpr const lgfx::IFont* FONT_DIGITS  = &lgfx::fonts::Font7;  // 48px
 #define AUTHORS_LINE3  "Goshante, G8PTN (Dave), R9UCL (Max Arnold),"
 #define AUTHORS_LINE4  "Marat Fayzullin"
 
-#define VER_APP        244  // Firmware version
+#define VER_APP        245  // Firmware version
 #define VER_OTA          1  // OTA compatibility; bump when a full USB flash is required
 #define VER_SETTINGS    71  // Settings version
 #define VER_MEMORIES    71  // Memories version
@@ -39,6 +39,7 @@ static constexpr const lgfx::IFont* FONT_DIGITS  = &lgfx::fonts::Font7;  // 48px
 #define AM            3
 
 // RDS Modes
+#define RDS_OFF       0b00000000  // Off
 #define RDS_PS        0b00000001  // Station name
 #define RDS_CT        0b00000010  // Time
 #define RDS_PI        0b00000100  // PI code
