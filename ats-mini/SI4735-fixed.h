@@ -1,5 +1,8 @@
 #include <SI4735.h>
 
+#define TUNE_TIMEOUT_MS 300 // Maximum wait for tune completion.
+#define TUNE_POLL_INTERVAL_MS 10 // Interval between tune/seek completion checks.
+
 class SI4735_fixed: public SI4735
 {
   private:
@@ -56,6 +59,47 @@ class SI4735_fixed: public SI4735
     }
 
   public:
+    bool pollTuneStatus(bool cancel = false)
+    {
+      bool complete = !cancel && (getInterruptStatus().raw & 0x01);
+      getStatus(complete || cancel, cancel);
+      currentWorkFrequency = (uint16_t(currentStatus.resp.READFREQH) << 8) | currentStatus.resp.READFREQL;
+      return complete;
+    }
+
+    // CTS acknowledges the command; STC marks completion. The deadline bounds
+    // the STC wait, not the library's internal CTS/error loops.
+    bool setFrequencyConfirmed(uint16_t freq)
+    {
+      // Keep the library's 30 ms delay; early GET_INT_STATUS can disrupt
+      // automatic antenna capacitor tuning.
+      setFrequency(freq);
+      return waitFrequencyConfirmed(freq);
+    }
+
+    bool waitFrequencyConfirmed(uint16_t freq)
+    {
+      uint32_t started = millis();
+      do
+      {
+        if(pollTuneStatus()) return currentWorkFrequency == freq;
+        delay(TUNE_POLL_INTERVAL_MS);
+      } while(millis() - started < TUNE_TIMEOUT_MS);
+      return false;
+    }
+
+    // AM/SSB only. Update cached command bytes without tuning or I2C traffic.
+    // Returns true if a new tune is needed to apply the changed setting.
+    bool configureAntennaCapacitor(bool automatic)
+    {
+      uint8_t value = automatic ? 0 : 1;
+      bool changed = currentFrequencyParams.arg.ANTCAPH != 0 ||
+                     currentFrequencyParams.arg.ANTCAPL != value;
+      currentFrequencyParams.arg.ANTCAPH = 0;
+      currentFrequencyParams.arg.ANTCAPL = value;
+      return changed;
+    }
+
     void RdsInit(void)
     {
       SI4735::RdsInit();
@@ -261,31 +305,49 @@ class SI4735_fixed: public SI4735
       return(true);
     }
 
+  // PU2CLR 2.1.8 chooses AM seek capacitance from the starting frequency.
+  // Preserve the configured tuning capacitor instead; keep FM unchanged.
+  void seekStation(uint8_t up_down, uint8_t wrap)
+  {
+    if(currentTune != AM_TUNE_FREQ)
+    {
+      SI4735::seekStation(up_down, wrap);
+      return;
+    }
+
+    si47x_seek seek = {};
+    seek.arg.SEEKUP = up_down;
+    seek.arg.WRAP = wrap;
+
+    waitToSend();
+    Wire.beginTransmission(deviceAddress);
+    Wire.write(AM_SEEK_START);
+    Wire.write(seek.raw);
+    Wire.write(uint8_t(0)); // Reserved ARG2
+    Wire.write(uint8_t(0)); // Reserved ARG3
+    Wire.write(currentFrequencyParams.arg.ANTCAPH);
+    Wire.write(currentFrequencyParams.arg.ANTCAPL);
+    Wire.endTransmission();
+    delay(MAX_DELAY_AFTER_SET_FREQUENCY << 2);
+  }
+
   void seekStationProgress(void (*showFunc)(uint16_t f), bool (*stopSeeking)(), uint8_t up_down)
   {
-    si47x_frequency freq;
-    long elapsed_seek = millis();
-
-    // seek command does not work for SSB
-    if (lastMode == SSB_CURRENT_MODE)
-      return;
-
+    if(currentSsbStatus) return;
+    uint32_t started = millis();
     seekStation(up_down, 0);
-    do
-    {
-      delay(maxDelaySetFrequency);
-      getStatus(0, 0);
-      delay(maxDelaySetFrequency);
-      freq.raw.FREQH = currentStatus.resp.READFREQH;
-      freq.raw.FREQL = currentStatus.resp.READFREQL;
-      currentWorkFrequency = freq.value;
-      if (showFunc != NULL)
-        showFunc(freq.value);
-      if (stopSeeking != NULL)
-        if (stopSeeking())
-          return;
 
-    } while (!currentStatus.resp.VALID && !currentStatus.resp.BLTF && (millis() - elapsed_seek) < maxSeekTime);
+    uint16_t previousFreq = UINT16_MAX;
+    for(;;)
+    {
+      bool cancel = (stopSeeking && stopSeeking()) || (uint32_t)(millis() - started) >= maxSeekTime;
+      bool complete = pollTuneStatus(cancel);
+      if(showFunc && (currentWorkFrequency != previousFreq || complete || cancel))
+        showFunc(currentWorkFrequency);
+      previousFreq = currentWorkFrequency;
+      if(complete || cancel) return;
+      delay(TUNE_POLL_INTERVAL_MS);
+    }
   }
 
 #if 0

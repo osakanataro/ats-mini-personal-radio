@@ -65,6 +65,7 @@ int8_t SsbAgcIdx = 0;                   // Default SSB AGCON  : Range = 0 to 1, 
 int8_t AmAvcIdx = 48;                   // Default AM  = 48 (as per AN332), range = 12 to 90 in steps of 2
 int8_t SsbAvcIdx = 48;                  // Default SSB = 48, range = 12 to 90 in steps of 2
 bool ssbAvcHold = false;                // Temporary; cleared when the band/mode is reinitialized
+bool autoAntennaCapacitor = false;      // Automatic antenna tuning on MW/LW bands
 
 // SoftMute index per mode (AM/SSB)
 int8_t AmSoftMuteIdx = 4;               // Default AM  = 4, range = 0 to 32
@@ -436,11 +437,16 @@ void useBand(Band *band)
       rx.setSSBConfig(getCurrentBandwidth()->idx, 1, 0, 1, 0, 1);
       // G8PTN: Commented out
       //rx.setSsbSoftMuteMaxAttenuation(softMuteMaxAttIdx);
-      applyBFO();
     }
 
-    // Set the tuning capacitor for SW or MW/LW
-    // rx.setTuneFrequencyAntennaCapacitor((band->bandType == MW_BAND_TYPE || band->bandType == LW_BAND_TYPE) ? 0 : 1);
+    // Mode setup resets the capacitor; apply the selected policy afterward.
+    bool automatic = autoAntennaCapacitor &&
+      (band->bandType == MW_BAND_TYPE || band->bandType == LW_BAND_TYPE);
+    bool changed = rx.configureAntennaCapacitor(automatic);
+    bool tuned = changed ? rx.setFrequencyConfirmed(receiverFreq)
+                         : rx.waitFrequencyConfirmed(receiverFreq);
+    if(!tuned) return;
+    if(isSSB()) applyBFO();
 
     // G8PTN: Enable GPIO1 as output
     rx.setGpioCtl(1, 0, 0);
@@ -483,11 +489,11 @@ bool updateFrequency(int64_t newFreq, bool wrap)
   uint16_t receiverFreq = getReceiverFrequency(newFreq);
   if(!isSSB() || receiverFreq != getReceiverFrequency(currentFrequency))
   {
-    rx.setFrequency(receiverFreq);
+    if(!rx.setFrequencyConfirmed(receiverFreq)) return false;
     if(isSSB()) doAgc(0);
   }
 
-  currentFrequency = isSSB()? newFreq : freqToHz(rx.getFrequency(), currentMode);
+  currentFrequency = isSSB()? newFreq : freqToHz(receiverFreq, currentMode);
   if(isSSB()) applyBFO();
   band->currentFreq = currentFrequency;
   return true;
@@ -548,8 +554,15 @@ bool doSeek(int16_t enc, int16_t enca)
       // and is consumed without executing its command.
       seekStop = false;
       if(!consumeAbortPending())
+      {
+        uint32_t savedFrequency = currentFrequency;
         rx.seekStationProgress(showFrequencySeek, consumeAbortPending, enc>0? 1 : 0);
-      updateFrequency(freqToHz(rx.getFrequency(), currentMode), true);
+        uint32_t target = freqToHz(rx.getCurrentFrequency(), currentMode);
+        // Cancellation status can precede the final hardware frequency.
+        // Retune and confirm the reported position before accepting it.
+        currentFrequency = savedFrequency;
+        updateFrequency(target, true);
+      }
     }
   }
   else if(seekMode() == SEEK_SCHEDULE && enc)
