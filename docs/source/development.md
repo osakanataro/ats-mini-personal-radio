@@ -16,7 +16,7 @@ A short video tutorial on how to build a custom firmware version ([YouTube mirro
 3. Compile and flash the firmware
 
 ```shell
-arduino-cli compile --clean -e -p COM_PORT -u ats-mini
+arduino-cli compile --jobs 8 -e -p COM_PORT -u ats-mini
 ```
 
 Build profiles are defined in `ats-mini/sketch.yaml`. Choose the profile matching your receiver's PSRAM with `--profile`: `esp32s3-ospi` for Octal PSRAM or `esp32s3-qspi` for Quad PSRAM. Without this option, Arduino CLI uses `esp32s3-ospi`.
@@ -24,13 +24,13 @@ Build profiles are defined in `ats-mini/sketch.yaml`. Choose the profile matchin
 To compile without flashing:
 
 ```shell
-arduino-cli compile --clean --profile esp32s3-ospi ats-mini
-arduino-cli compile --clean --profile esp32s3-qspi ats-mini
+arduino-cli compile --jobs 8 --profile esp32s3-ospi ats-mini
+arduino-cli compile --jobs 8 --profile esp32s3-qspi ats-mini
 ```
 
 Run the command for your profile. Add `-e` to export the firmware binaries, and `-p COM_PORT -u` to flash them. Arduino CLI installs the platform and library versions specified in the selected profile automatically.
 
-Omit `--clean` for faster subsequent builds, which reuse previously compiled files.
+Add `--clean` to clean the compiler cache (rebuilds the project from scratch).
 
 When a library gets upgraded in the `sketch.yaml` project configuration file, it might be necessary to run the following commands to ensure that the Arduino CLI has the most current information about available platforms and libraries:
 
@@ -44,19 +44,11 @@ arduino-cli lib update-index
 The available options are:
 
 * `LILYGO_SI473X` - compile for [LILYGO T-Embed SI4732](hardware.md#lilygo-t-embed-si4732) hardware variant
-* `BLE_POWER_LEVEL` - Bluetooth LE TX power level (default: `ESP_PWR_LVL_N0`). Possible values are `ESP_PWR_LVL_N24`, `ESP_PWR_LVL_N21`, `ESP_PWR_LVL_N18`, `ESP_PWR_LVL_N15`, `ESP_PWR_LVL_N12`, `ESP_PWR_LVL_N9`, `ESP_PWR_LVL_N6`, `ESP_PWR_LVL_N3`, `ESP_PWR_LVL_N0`, `ESP_PWR_LVL_P3`, `ESP_PWR_LVL_P6`, `ESP_PWR_LVL_P9`, `ESP_PWR_LVL_P12`, `ESP_PWR_LVL_P15`, `ESP_PWR_LVL_P18`, and `ESP_PWR_LVL_P20`.
-* `WIFI_POWER_LEVEL` - Wi-Fi TX power level (default: `WIFI_POWER_17dBm`). Possible values are `WIFI_POWER_21dBm`, `WIFI_POWER_20_5dBm`, `WIFI_POWER_20dBm`, `WIFI_POWER_19_5dBm`, `WIFI_POWER_19dBm`, `WIFI_POWER_18_5dBm`, `WIFI_POWER_17dBm`, `WIFI_POWER_15dBm`, `WIFI_POWER_13dBm`, `WIFI_POWER_11dBm`, `WIFI_POWER_8_5dBm`, `WIFI_POWER_7dBm`, `WIFI_POWER_5dBm`, `WIFI_POWER_2dBm`, and `WIFI_POWER_MINUS_1dBm`.
 
 To set an option, add the `--build-property` command line argument like this:
 
 ```shell
-arduino-cli compile --build-property "compiler.cpp.extra_flags=-DLILYGO_SI473X" --clean -e -p COM_PORT -u ats-mini
-```
-
-For example, to lower Bluetooth LE and Wi-Fi TX power:
-
-```shell
-arduino-cli compile --build-property "compiler.cpp.extra_flags=-DBLE_POWER_LEVEL=ESP_PWR_LVL_N12 -DWIFI_POWER_LEVEL=WIFI_POWER_13dBm" --clean -e -p COM_PORT -u ats-mini
+arduino-cli compile --build-property "compiler.cpp.extra_flags=-DLILYGO_SI473X" --jobs 8 -e -p COM_PORT -u ats-mini
 ```
 
 ## Using the make command
@@ -67,17 +59,25 @@ You can do all of the above using the `make` command as well:
 LILYGO_SI473X=1 PORT=/dev/tty.usbmodem14401 make upload
 ```
 
-To set Bluetooth LE and Wi-Fi TX power with `make`:
-
-```shell
-BLE_POWER_LEVEL=ESP_PWR_LVL_N12 WIFI_POWER_LEVEL=WIFI_POWER_13dBm PORT=/dev/tty.usbmodem14401 make upload
-```
-
 When adding, removing, or renaming firmware source or header files, update the `SRC` and `HEADERS` lists in `ats-mini/Makefile` so `make` tracks the correct build dependencies.
 
 ## Decoding stack traces
 
 To decode a stack trace (printed via serial port) use the following tool: <https://esphome.github.io/esp-stacktrace-decoder/>
+
+## Monitoring CAT commands
+
+Enable `Settings -> USB Port -> CAT TS-480` and run (adjust the USB port):
+
+```shell
+socat -d -d -v PTY,link=/tmp/ttyCAT,rawer,echo=0 /dev/cu.usbmodem14401,rawer,echo=0,ispeed=921600,ospeed=921600 2> /tmp/cat.log
+```
+
+Connect the CAT application to `/tmp/ttyCAT`. Watch with `tail -f /tmp/cat.log`: `>` marks commands, `<` replies. Press **Ctrl+C** to stop the bridge.
+
+## ESPConnect
+
+[ESPConnect](https://thelastoutpostworkshop.github.io/ESPConnect/) is a browser-based tool to back up, flash and inspect ESP32 microcontrollers.
 
 ## Enabling the pre-commit hooks
 

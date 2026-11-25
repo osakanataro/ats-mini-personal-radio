@@ -78,16 +78,18 @@ The menu can be invoked by clicking the encoder button and is closed automatical
 * **UI Layout** - Alternative UI layouts. For now there is just one alternative UI with large S-meter and S/N-meter.
 * **Zoom Menu** - Display the currently selected menu item using a larger font (accessibility option).
 * **Scroll Dir.** - Menu scroll direction for clockwise encoder turn.
+* **Enc. Accel.** - Increase tuning and adjustment speed when turning the encoder quickly (On by default). Disable for a constant step per click.
 * **RDS** - Radio Data System options: PS - radio station name, CT - date and time, RT - text, PTY - genre, ALL (EU/US) - everything, OFF - turn RDS off. RDS CT should contain UTC date and time, but some stations incorrectly transmit local or completely bogus values. The clock is synchronized from RDS only once. To synchronize it again, disable and re-enable RDS CT or switch the receiver off and on.
 * **FM Stereo** - **Auto** lets the receiver blend down to mono on its own as the signal gets worse, **Mono** forces mono audio, trading the stereo image for less hiss on a weak station.
 * **FM Region** - FM de-emphasis time constant by region (50µs for EU/JP/AU and 75µs for the US).
+* **Capacitor** - Automatically adjusts the antenna tuning capacitor on MW1, MW2, MW3, and 160 m bands. Off by default; only works on receivers without a Hi-Z input circuit.
 * **Calibration** - SSB calibration offset (-2000...2000, per mode/band).
 * **DSP Patches** - Select **Default** or an uploaded AM/SSB patch set. Manage these experimental patches on the web interface's **Patches** page.
 * **Load EiBi** - download the EiBi [schedule](#schedule) (requires Wi-Fi internet connection).
 * **Update FW** - **Check** shows the available firmware version; **Update** installs it (requires a Wi-Fi internet connection). See [updating over Wi-Fi](flash.md#update-over-wi-fi).
-* **USB Port** - USB serial mode: Off (default) or Ad hoc. In Ad hoc mode, the receiver accepts the [remote control](remote.md) commands over the USB serial port.
-* **TCP Port** - TCP control mode: Off (default) or Ad hoc. In Ad hoc mode, one client can use the [remote control](remote.md#tcp-over-wi-fi) commands over Wi-Fi on port 60000. Wi-Fi must be enabled separately.
-* **Bluetooth** - Bluetooth LE mode: Off (default), Ad hoc, HID, or Unpair All. Ad hoc exposes the same [remote control](remote.md) protocol over BLE. HID makes the receiver act as a BLE HID central and connect to supported Bluetooth remotes/keyboards so their buttons can control tuning and menu actions. Unpair All clears all saved Bluetooth bonds and then switches Bluetooth to Off. WARNING: it is not recommended to enable both Bluetooth and Wi-Fi at the same time (the receiver might become unstable).
+* **USB Port** - USB serial mode: Off (default), [Ad hoc](remote.md#ad-hoc-protocol), or [CAT TS-480](remote.md#kenwood-cat-protocol). The selected protocol accepts [remote control](remote.md) commands over the USB serial port.
+* **TCP Port** - TCP control mode: Off (default), [Ad hoc](remote.md#ad-hoc-protocol), or [CAT TS-480](remote.md#kenwood-cat-protocol). One client can use the selected [remote control](remote.md#tcp-over-wi-fi) protocol over Wi-Fi on port 60000. Wi-Fi must be enabled separately.
+* **Bluetooth** - Bluetooth LE mode: Off (default), [Ad hoc](remote.md#ad-hoc-protocol), [CAT TS-480](remote.md#kenwood-cat-protocol), HID, or Unpair All. Ad hoc and CAT TS-480 expose the selected [remote control](remote.md) protocol over BLE. HID makes the receiver act as a BLE HID central and connect to supported Bluetooth remotes/keyboards so their buttons can control tuning and menu actions. Unpair All clears all saved Bluetooth bonds and then switches Bluetooth to Off. WARNING: it is not recommended to enable both Bluetooth and Wi-Fi at the same time (the receiver might become unstable).
 * **Wi-Fi** - Wi-Fi mode: Off (default), Access Point, Access Point + Connect, Connect, Sync Only. More details on that below.
 * **About** - Informational screens (Help, Authors, System).
 
@@ -127,8 +129,9 @@ The `Config` page lets you set the UTC date/time manually or from the browser, a
 * `Off Timer`: changing the duration restarts its countdown; saving the same duration leaves it running.
 * `Half-step Encoder`: leave it off for the original EC11 20C20P encoder (20 clicks, 20 pulses), and enable it for an EC11 30C15P encoder (30 clicks, 15 pulses). Half-step mode is also required for the LILYGO T-Embed SI4732 hardware variant. See [discussion #87](https://github.com/esp32-si4732/ats-mini/discussions/87) for more information.
 * `Audio Clamp`: disable it for receivers without an audio clamp circuit to suppress clicks when muting or changing bands or modes. Leave it enabled for receivers with the circuit and for LILYGO T-Embed SI4732.
-* `Automatic Antenna Capacitor`: enables automatic antenna tuning on MW1, MW2, MW3, and 160 m bands. It is disabled by default and only works on receivers without a Hi-Z input circuit.
 * `Splash Screen`: upload or delete an optional [splash image](_static/splash-outdoor.png) shown when the receiver starts.
+
+Wi-Fi and Bluetooth LE TX power can be changed only on the `Config` page, under Power. The defaults are 17 dBm for Wi-Fi and 0 dBm for Bluetooth LE. Changes apply immediately and are saved across restarts. Lower power reduces range and may disconnect remote controls or the web interface.
 
 The `Wi-Fi` page lets you select the Wi-Fi mode, configure up to three access points the receiver will try to connect to and add optional login and password to protect the memory, settings, Wi-Fi, and firmware update pages. Enable `Scan Hidden SSIDs` only if one of the configured access points does not broadcast its network name; leaving it off makes Wi-Fi connection faster. Changing Wi-Fi mode may disconnect the browser; Off and Sync Only disable the web interface.
 

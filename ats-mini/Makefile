@@ -8,22 +8,10 @@ PORT	?= /dev/cu.usbmodem1101
 
 DEBUG_LEVEL ?= 0
 
-#
-# BLE_POWER_LEVEL : BLE TX power level, for example ESP_PWR_LVL_N12
-# WIFI_POWER_LEVEL: WiFi TX power level, for example WIFI_POWER_13dBm
-#
 DEFINES = -DDEBUG=$(DEBUG_LEVEL)
 
 ifdef LILYGO_SI473X
         DEFINES += -DLILYGO_SI473X
-endif
-
-ifdef BLE_POWER_LEVEL
-        DEFINES += -DBLE_POWER_LEVEL=$(BLE_POWER_LEVEL)
-endif
-
-ifdef WIFI_POWER_LEVEL
-        DEFINES += -DWIFI_POWER_LEVEL=$(WIFI_POWER_LEVEL)
 endif
 
 OPTIONS = \
@@ -31,17 +19,17 @@ OPTIONS = \
 	--warnings all
 
 HEADERS = \
-	Parser.h ParserTypes.h ParserUtils.h ParserAdhoc.h \
+	Parser.h ParserTypes.h ParserUtils.h ParserAdhoc.h ParserKenwood.h \
 	Common.h Themes.h Menu.h Memories.h Storage.h Display.h Rotary.h \
-	Utils.h Button.h EIBI.h Remote.h BleMode.h TcpMode.h BlePeripheral.h \
+	Utils.h Button.h EIBI.h Remote.h RemoteAdhoc.h RemoteKenwood.h Screenshot.h UsbMode.h BleMode.h TcpMode.h BlePeripheral.h \
 	BleUartPeripheral.h BleCentral.h BleHidCentral.h \
 	SI4735-fixed.h patch_init.h PatchParser.h Patches.h Splash.h Ota.h Web.h \
 	$(wildcard Page*.h)
 
 SRC = \
-	Parser.cpp ParserAdhoc.cpp \
+	Parser.cpp ParserAdhoc.cpp ParserKenwood.cpp \
 	$(INO) Utils.cpp Rotary.cpp Button.cpp Draw.cpp Menu.cpp Memories.cpp \
-	Station.cpp Battery.cpp Storage.cpp Themes.cpp Remote.cpp \
+	Station.cpp Battery.cpp Storage.cpp Themes.cpp Remote.cpp RemoteAdhoc.cpp RemoteKenwood.cpp Screenshot.cpp UsbMode.cpp \
 	Network.cpp Web.cpp Patches.cpp Ota.cpp Splash.cpp EIBI.cpp Scan.cpp About.cpp BleMode.cpp TcpMode.cpp \
 	BlePeripheral.cpp BleUartPeripheral.cpp \
 	BleCentral.cpp BleHidCentral.cpp \
@@ -58,7 +46,7 @@ help:
 build: $(ELF)
 
 $(ELF): $(INO) $(SRC) $(HEADERS)
-	$(ARDUINO_CLI) compile -e -p $(PROFILE) $(OPTIONS)
+	$(ARDUINO_CLI) compile --jobs 8 -e -p $(PROFILE) $(OPTIONS)
 
 upload: build
 	$(ARDUINO_CLI) upload -m $(PROFILE) -p $(PORT)
@@ -76,8 +64,13 @@ build/TestParserAdhoc: tests/TestParserAdhoc.cpp ParserAdhoc.cpp ParserAdhoc.h P
 	mkdir -p build
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -std=c++11 -Wall -Wextra -UNDEBUG tests/TestParserAdhoc.cpp ParserAdhoc.cpp Parser.cpp $(LDFLAGS) -o $@
 
-test: build/TestParser build/TestParserAdhoc
+build/TestParserKenwood: tests/TestParserKenwood.cpp ParserKenwood.cpp ParserKenwood.h Parser.cpp Parser.h ParserTypes.h ParserUtils.h
+	mkdir -p build
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -std=c++11 -Wall -Wextra -UNDEBUG tests/TestParserKenwood.cpp ParserKenwood.cpp Parser.cpp $(LDFLAGS) -o $@
+
+test: build/TestParser build/TestParserAdhoc build/TestParserKenwood
 	./build/TestParser
 	./build/TestParserAdhoc
+	./build/TestParserKenwood
 
 .PHONY: all help build upload clean test

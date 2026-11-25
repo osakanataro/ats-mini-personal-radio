@@ -2,6 +2,7 @@
 #define COMMON_H
 
 #include <stdint.h>
+#include <atomic>
 #include "Display.h"
 #include "ParserTypes.h"
 #include <SI4735-fixed.h>
@@ -27,7 +28,7 @@ static constexpr const lgfx::IFont* FONT_JA      = &lgfx::fonts::efontJA_16; // 
 #define AUTHORS_LINE3  "Goshante, G8PTN (Dave), R9UCL (Max Arnold),"
 #define AUTHORS_LINE4  "Marat Fayzullin"
 
-#define VER_APP        245  // Firmware version
+#define VER_APP        246  // Firmware version
 #define VER_OTA          1  // OTA compatibility; bump when a full USB flash is required
 #define VER_SETTINGS    71  // Settings version
 #define VER_MEMORIES    71  // Memories version
@@ -119,16 +120,19 @@ static constexpr const lgfx::IFont* FONT_JA      = &lgfx::fonts::efontJA_16; // 
 // Bluetooth modes
 #define BLE_OFF        0 // Bluetooth is disabled
 #define BLE_ADHOC      1 // Ad hoc BLE serial protocol
-#define BLE_HID        2 // BLE HID central
-#define BLE_UNPAIR_ALL 3 // Clear all BLE bonds, then disable Bluetooth
+#define BLE_KENWOOD    2 // Kenwood CAT over BLE serial
+#define BLE_HID        3 // BLE HID central
+#define BLE_UNPAIR_ALL 4 // Clear all BLE bonds, then disable Bluetooth
 
 // USB modes
 #define USB_OFF        0 // USB is disabled
 #define USB_ADHOC      1 // Ad hoc serial protocol
+#define USB_KENWOOD    2 // Kenwood CAT protocol
 
 // TCP modes
 #define TCP_OFF        0 // TCP control is disabled
 #define TCP_ADHOC      1 // Ad hoc protocol over TCP
+#define TCP_KENWOOD    2 // Kenwood CAT over TCP
 
 //
 // Data Types
@@ -138,7 +142,8 @@ typedef struct
 {
   const char *bandName;   // Band description
   uint8_t bandType;       // Band type (FM, MW, or SW)
-  uint8_t bandMode;       // Band mode (FM, AM, LSB, or USB)
+  uint8_t bandMode;       // Current mode (FM, AM, LSB, or USB)
+  uint8_t defaultMode;    // Factory mode; not overwritten by preferences
   uint32_t minimumFreq;   // Minimum frequency of the band in Hz
   uint32_t maximumFreq;   // Maximum frequency of the band in Hz
   uint32_t currentFreq;   // Default or current frequency in Hz
@@ -200,6 +205,7 @@ extern uint8_t sleepModeIdx;
 extern bool zoomMenu;
 extern int8_t scrollDirection;
 extern bool encoderHalfStep;
+extern bool encoderAcceleration;
 extern uint8_t utcOffsetIdx;
 extern uint8_t uiLayoutIdx;
 
@@ -259,6 +265,27 @@ uint16_t getRdsPiCode();
 void clearStationInfo();
 bool checkRds();
 bool identifyFrequency(uint32_t freq, bool periodic = false);
+
+// Wi-Fi and Bluetooth LE TX power settings
+constexpr int8_t WIFI_POWER_DEFAULT_DBM = 17; // 16.5 dBm, displayed as 17 dBm
+constexpr int8_t BLE_POWER_DEFAULT_DBM = 0;   // Whole dBm
+struct BlePowerOption
+{
+  int8_t dbm;
+  int8_t level; // SDK enum
+};
+
+extern const int8_t wifiPowerOptions[]; // Integer dBm labels
+extern const size_t wifiPowerCount;
+extern const BlePowerOption blePowerOptions[];
+extern const size_t blePowerCount;
+extern std::atomic<int8_t> wifiPowerDbm;
+extern std::atomic<int8_t> blePowerDbm;
+
+bool wifiPowerValid(int power);
+bool blePowerValid(int power);
+bool wifiApplyPower();
+void bleApplyPower();
 
 // Network.cpp
 int8_t getWiFiStatus();

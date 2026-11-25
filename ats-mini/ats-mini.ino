@@ -14,7 +14,7 @@
 #include "Themes.h"
 #include "Utils.h"
 #include "EIBI.h"
-#include "Remote.h"
+#include "UsbMode.h"
 #include "BleMode.h"
 #include "TcpMode.h"
 #include "Splash.h"
@@ -79,6 +79,7 @@ uint8_t FmRegionIdx = 0;                // FM Region
 uint16_t currentBrt = 130;              // Display brightness, range = 10 to 255 in steps of 5
 uint16_t currentSleep = DEFAULT_SLEEP;  // Display sleep timeout, range = 0 to 255 in steps of 5
 long elapsedSleep = millis();           // Display sleep timer
+bool encoderAcceleration = true;        // Accelerate fast encoder rotation
 bool zoomMenu = false;                  // Display zoomed menu item
 int8_t scrollDirection = 1;             // Menu scroll direction
 #if defined(LILYGO_SI473X)
@@ -508,7 +509,7 @@ bool consumeAbortPending()
     return true;
   }
   if(bleConsumeAbortPending(bleModeIdx)) return true;
-  if(serialConsumeAbortPending(usbModeIdx)) return true;
+  if(usbConsumeAbortPending(usbModeIdx)) return true;
   if(tcpConsumeAbortPending(tcpModeIdx)) return true;
 
   // Checking isPressed without debouncing because this helper is used from
@@ -694,6 +695,7 @@ bool processRssiSnr()
 bool handleRotation(int16_t enc, int16_t accelerated, bool pressed)
 {
   if(!enc || (sleepOn() && sleepModeIdx == SLEEP_LOCKED)) return false;
+  if(!encoderAcceleration) accelerated = enc;
   bool changed = false;
   if(pressed)
   {
@@ -811,7 +813,7 @@ void loop()
     needRedraw |= handleClick(button.wasShortPressed);
 
   // Each source executes independently, so simultaneous inputs are not lost.
-  needRedraw |= serialLoop(usbModeIdx);
+  needRedraw |= usbLoop(usbModeIdx);
   needRedraw |= bleLoop(bleModeIdx);
   needRedraw |= tcpLoop(tcpModeIdx);
   uint32_t currentTime = millis();

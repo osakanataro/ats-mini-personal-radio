@@ -3,7 +3,6 @@
 #include "TcpMode.h"
 
 #include <WiFi.h>
-#include <lwip/sockets.h>
 
 static WiFiServer tcpServer(TCP_CONTROL_PORT, 1);
 static WiFiClient tcpClient;
@@ -18,14 +17,7 @@ static bool tcpIsConnected()
     tcpClient.stop();
     return false;
   }
-  if(tcpClient.available()) return true;
-
-  // The pinned core reports connected after EOF. Check only after draining
-  // WiFiClient's RX buffer, so a peer's final commands are still processed.
-  uint8_t byte;
-  if(recv(tcpClient.fd(), &byte, 1, MSG_PEEK | MSG_DONTWAIT) == 0)
-    tcpClient.stop();
-  return tcpClient.fd() >= 0;
+  return true;
 }
 
 static InputEvent tcpReadInput(uint8_t& byte)
@@ -51,12 +43,25 @@ void tcpStop()
   tcpClient.stop();
   tcpServer.end();
   tcpInputResetPending = true;
+  remoteTCPState = RemoteState{};
+}
+
+static bool tcpSelectMode(uint8_t tcpMode)
+{
+  static uint8_t previousMode = TCP_OFF;
+  if(tcpMode != previousMode)
+  {
+    // Reconnect after switching protocols; queued input belongs to the old one.
+    tcpStop();
+    previousMode = tcpMode;
+  }
+  return tcpMode == TCP_ADHOC || tcpMode == TCP_KENWOOD;
 }
 
 bool tcpLoop(uint8_t tcpMode)
 {
   bool networkUp = WiFi.status() == WL_CONNECTED || (WiFi.getMode() & WIFI_AP);
-  if(tcpMode != TCP_ADHOC || !networkUp)
+  if(!tcpSelectMode(tcpMode) || !networkUp)
   {
     if(tcpServer) tcpStop();
     return false;
@@ -87,10 +92,12 @@ bool tcpLoop(uint8_t tcpMode)
     }
   }
 
-  return remoteLoop(&tcpClient, &remoteTCPState, tcpReadInput);
+  return remoteLoop(tcpClient, remoteTCPState, tcpReadInput,
+                    tcpMode == TCP_KENWOOD ? RemoteProtocol::Kenwood : RemoteProtocol::Adhoc);
 }
 
 bool tcpConsumeAbortPending(uint8_t tcpMode)
 {
-  return tcpMode == TCP_ADHOC && remoteConsumeAbortPending(&remoteTCPState, tcpReadInput);
+  return tcpSelectMode(tcpMode) && remoteConsumeAbortPending(remoteTCPState, tcpReadInput,
+    tcpMode == TCP_KENWOOD ? RemoteProtocol::Kenwood : RemoteProtocol::Adhoc);
 }

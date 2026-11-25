@@ -56,7 +56,7 @@ Upload from one browser at a time; if the connection drops, reconnect and retry.
 
 Works on: Windows, macOS, Linux
 
-This is the simplest method, but you need a browser that supports the [Web Serial API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API). This means Chrome and [some other browsers](https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API#browser_compatibility). No, Firefox and Safari can't do it.
+This is the simplest method, but you need a browser that supports the [Web Serial API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API). This means Chrome, Edge, Firefox, and [some other browsers](https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API#browser_compatibility). No, Safari can't do it.
 
 ```{tip}
 On Linux, please make sure that the user account that runs your browser has the [necessary permissions](https://www.reddit.com/r/linuxquestions/comments/vqzev0/browser_serial_port_fails_to_open/) to access the serial port.
@@ -74,6 +74,8 @@ On Linux, please make sure that the user account that runs your browser has the 
 10. Check out the firmware version in Menu -> Settings -> About on the receiver.
 
 ![](_static/esp-web-flasher.png)
+
+Alternatively, you can use the [ESPConnect](https://thelastoutpostworkshop.github.io/ESPConnect/) tool, but it only allows uploading one binary file at a time.
 
 ## Flash Download Tool
 

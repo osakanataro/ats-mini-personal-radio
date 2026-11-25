@@ -48,7 +48,9 @@
 #define CMD_FM_STEREO  0x3300 // |
 #define CMD_DSP_PATCHES 0x3400 // |
 #define CMD_ABOUT      0x3500 // |
-#define CMD_OFFTIMER   0x3600 //-+
+#define CMD_OFFTIMER   0x3600 // |
+#define CMD_ANTCAP     0x3700 // |
+#define CMD_ENC_ACCEL  0x3800 //-+
 
 // UI Layouts
 #define UI_DEFAULT  0
@@ -114,6 +116,12 @@ extern bool vfoInitialized;
 
 void initVfo();
 VfoState captureVfo();
+// Index must be 0 or 1. The active VFO reflects live receiver settings.
+VfoState getVfo(uint8_t index);
+bool selectVfo(uint8_t index);
+void copyVfo();
+bool setVfoFrequency(uint8_t index, uint32_t freq);
+bool setMode(uint8_t mode);
 
 uint8_t seekMode(bool toggle = false);
 void drawSideBar(uint16_t cmd, int x, int y, int sx);
@@ -152,6 +160,7 @@ void doFmStereo(int16_t enc);
 void doRDSMode(int16_t enc);
 void doBandwidth(int16_t enc);
 void doVolume(int16_t enc);
+void doSquelch(int16_t enc);
 void doBrt(int16_t enc);
 void doCal(int16_t enc);
 void doStep(int16_t enc);

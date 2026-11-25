@@ -3,6 +3,10 @@
 
 #include <Arduino.h>
 #include "Parser.h"
+#include "RemoteAdhoc.h"
+#include "RemoteKenwood.h"
+
+enum class RemoteProtocol : uint8_t { Adhoc, Kenwood };
 
 enum class InputEvent : uint8_t { NoData, SessionReset, Byte };
 
@@ -11,22 +15,18 @@ enum class InputEvent : uint8_t { NoData, SessionReset, Byte };
 using RemoteReadInput = InputEvent (*)(uint8_t& byte);
 
 struct RemoteState {
-  uint32_t remoteTimer = millis();
-  uint8_t remoteSeqnum = 0;
-  bool remoteLogOn = false;
   FramerState input;
   uint32_t inputTimer = 0;
+  AdhocState adhoc;
+  KenwoodState kenwood;
 };
 
-// Capture from the main loop into a buffer of at least BMP_FILE_SIZE bytes.
-bool remoteCaptureBmp(uint8_t *bmp);
-
 // Process at most one command. Return whether the display needs updating.
-bool remoteLoop(Stream* stream, RemoteState* state, RemoteReadInput readInput);
+bool remoteLoop(Stream& stream, RemoteState& state, RemoteReadInput readInput,
+                RemoteProtocol protocol = RemoteProtocol::Adhoc);
 // Skip ignored separators; consume cancellation input without executing its
 // command, including its tail.
-bool remoteConsumeAbortPending(RemoteState* state, RemoteReadInput readInput);
-bool serialLoop(uint8_t usbMode);
-bool serialConsumeAbortPending(uint8_t usbMode);
+bool remoteConsumeAbortPending(RemoteState& state, RemoteReadInput readInput,
+                               RemoteProtocol protocol = RemoteProtocol::Adhoc);
 
 #endif

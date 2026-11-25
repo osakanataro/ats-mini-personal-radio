@@ -203,6 +203,7 @@ void prefsSave(uint32_t items)
     prefs.putUChar("SleepMode",   sleepModeIdx);   // Sleep mode
     prefs.putUChar("ZoomMenu",    zoomMenu);       // TRUE: Zoom menu
     prefs.putBool("ScrollDir", scrollDirection<0); // TRUE: Reverse scroll
+    prefs.putBool("EncAccel", encoderAcceleration); // TRUE: Encoder acceleration
     prefs.putBool("EncHalfStep", encoderHalfStep); // TRUE: Encoder half-step mode
     prefs.putUChar("UTCOffset",   utcOffsetIdx);   // UTC Offset
     prefs.putUInt("Squelch",      ((uint32_t)currentSquelch[FM]) |
@@ -215,6 +216,8 @@ void prefsSave(uint32_t items)
     prefs.putBool("AutoAntCap", autoAntennaCapacitor);
     prefs.putUChar("DSPPatchset", dspPatchesIdx);  // DSP patches
     prefs.putUChar("UILayout",    uiLayoutIdx);    // UI Layout
+    prefs.putChar("WiFiPower", wifiPowerDbm.load());
+    prefs.putChar("BLEPower", blePowerDbm.load());
     prefs.putUChar("BLEMode",     bleModeIdx);     // Bluetooth mode
     prefs.putUChar("USBMode",     usbModeIdx);     // USB mode
     prefs.putUChar("TCPMode",     tcpModeIdx);     // TCP mode
@@ -289,6 +292,7 @@ bool prefsLoad(uint32_t items)
     sleepModeIdx   = prefs.getUChar("SleepMode", sleepModeIdx); // Sleep mode
     zoomMenu       = prefs.getUChar("ZoomMenu", zoomMenu);      // TRUE: Zoom menu
     scrollDirection = prefs.getBool("ScrollDir", scrollDirection<0)? -1:1; // TRUE: Reverse scroll
+    encoderAcceleration = prefs.getBool("EncAccel", true); // Encoder acceleration
     setEncoderHalfStep(prefs.getBool("EncHalfStep", encoderHalfStep)); // Encoder half-step mode
     utcOffsetIdx   = prefs.getUChar("UTCOffset", utcOffsetIdx); // UTC Offset
     uint32_t squelch = prefs.getUInt("Squelch", ((uint32_t)currentSquelch[FM]) |
@@ -305,6 +309,10 @@ bool prefsLoad(uint32_t items)
     autoAntennaCapacitor = prefs.getBool("AutoAntCap", false);
     dspPatchesIdx  = prefs.getUChar("DSPPatchset", DSP_PATCHES_DEFAULT); // Uploaded patch set
     uiLayoutIdx    = prefs.getUChar("UILayout", uiLayoutIdx);   // UI Layout
+    int8_t savedWiFiPowerDbm = prefs.getChar("WiFiPower", WIFI_POWER_DEFAULT_DBM);
+    int8_t savedBlePowerDbm = prefs.getChar("BLEPower", BLE_POWER_DEFAULT_DBM);
+    wifiPowerDbm = wifiPowerValid(savedWiFiPowerDbm) ? savedWiFiPowerDbm : WIFI_POWER_DEFAULT_DBM;
+    blePowerDbm = blePowerValid(savedBlePowerDbm) ? savedBlePowerDbm : BLE_POWER_DEFAULT_DBM;
     bleModeIdx     = prefs.getUChar("BLEMode", bleModeIdx);     // Bluetooth mode
     usbModeIdx     = prefs.getUChar("USBMode", usbModeIdx);     // USB mode
     tcpModeIdx     = prefs.getUChar("TCPMode", TCP_OFF);        // TCP mode
